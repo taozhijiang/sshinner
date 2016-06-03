@@ -1,0 +1,15 @@
+{
+    "server":
+    {
+        "ipaddr": "127.0.0.1",
+		"port": 8900,
+    },
+    "client":
+    {
+		"username": "taozj",
+		"userid": 1222,
+        "port": 8080,
+		"f_port": 22, //Daemon
+        "r_mach_id": "1777ea03b44048099aa93e7702662952", //User
+    },
+}
