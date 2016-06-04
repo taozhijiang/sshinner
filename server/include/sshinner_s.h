@@ -1,12 +1,23 @@
+#include <errno.h>
 #include <stdio.h>
+
+#include <zlib.h>
+
 #include <systemd/sd-id128.h> 
 
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <event2/listener.h>
+#include <event2/util.h>
+#include <event2/buffer.h>
+#include <event2/event.h>
+#include <event2/bufferevent.h>
+
 #include "st_others.h"
 #include "st_slist.h"
+#include "sshinner.h"
 
 
 typedef struct {
@@ -37,22 +48,35 @@ typedef struct _conn_item {
 
 typedef struct _acct_item {
     SLIST_HEAD      list;
-    char username   [128];  //±£Áô¸øºóÆÚÈÏÖ¤Ê¹ÓÃ
+    char username   [128];  //A
     unsigned long   userid;
     CONN_ITEM conns[10];
 } ACCT_ITEM, *P_ACCT_ITEM;
 
-/**
- * Êµ¼Ê»á»°µÄÏûÏ¢½á¹¹
- */
 typedef struct _active_item {
     struct event_base *base;
-    sd_id128_t  mach_uuid;   //»á»°µÄÒÀ¾İ£¬¶ş²æÊ÷ÒÀ´Ë¿ìËÙÕÒµ½Á´½Ó
+    sd_id128_t  mach_uuid;   //B
     P_CONN_ITEM p_daemon;
     P_CONN_ITEM p_usr;
 } ACTIVE_ITEM, *P_ACTIVE_ITEM;
 
+/**
+ * å·¥å…·ç±»å‡½æ•°
+ */
 extern RET_T load_settings_server(P_SRV_OPT p_opt);
 extern void dump_srv_opts(P_SRV_OPT p_opt);
 
+/** 
+ * å¤„ç†è¿æ¥è¯·æ±‚ç±»å‡½æ•° 
+ */
+void accept_conn_cb(struct evconnlistener *listener,
+    evutil_socket_t fd, struct sockaddr *address, int socklen,
+    void *ctx);
+void accept_error_cb(struct evconnlistener *listener, void *ctx);
+void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
+
+/**
+ * æ•°æ®è½¬å‘å’Œå¤„ç†ç±»å‡½æ•°
+ */
+void bufferread_cb(struct bufferevent *bev, void *ptr);

@@ -2,11 +2,9 @@
 #include <signal.h>
 #include <string.h>
 #include <errno.h>
-
+#include <zlib.h>
 #include <sys/socket.h>
 
-#include <event2/event.h>
-#include <event2/bufferevent.h>
 #include <event2/listener.h>
 #include <event2/util.h>
 #include <event2/buffer.h>
@@ -17,20 +15,6 @@
 #include "st_others.h"
 #include "sshinner_c.h"
 
-
-/**
- * This program aim on the server side of libevent
- */
-
-void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
-void bufferread_cb(struct bufferevent *bev, void *ptr);
-
-static void
-accept_conn_cb(struct evconnlistener *listener,
-    evutil_socket_t fd, struct sockaddr *address, int socklen,
-    void *ctx);
-
-static void accept_error_cb(struct evconnlistener *listener, void *ctx);
 
 static void usage(void)
 {
@@ -111,29 +95,106 @@ int main(int argc, char* argv[])
         st_d_print("Connected to server OK!");
     }
 
+
     evutil_make_socket_nonblocking(srv_fd);
+    struct bufferevent *bev = 
+        bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(bev, srv_bufferread_cb, NULL, NULL, NULL);
+    bufferevent_enable(bev, EV_READ|EV_WRITE);
+
+    if (cltopt.C_TYPE == C_DAEMON) 
+    {
+        PKG_HEAD head;
+        memset(&head, 0, HEAD_LEN);
+
+        head.version = 1;
+        head.type = 'C';
+        head.direct = 2;
+        memcpy(&head.mach_uuid, &cltopt.mach_uuid, sizeof(cltopt.mach_uuid));
+        
+        /*发送DAEMON的配置信息*/
+        json_object* ajgResponse =  json_object_new_object(); 
+        json_object_object_add (ajgResponse, "hostname", 
+                               json_object_new_string(cltopt.hostname));
+        json_object_object_add (ajgResponse, "username", 
+                               json_object_new_string(cltopt.username));
+        json_object_object_add (ajgResponse, "userid", 
+                               json_object_new_int64(cltopt.userid)); 
+
+        const char* ret_str = json_object_to_json_string (ajgResponse);
+        head.dat_len = strlen(ret_str) + 1;
+        head.crc = crc32(0L, ret_str, strlen(ret_str) + 1);
+
+        bufferevent_write(bev, &head, HEAD_LEN);
+        bufferevent_write(bev, ret_str, head.dat_len);
+
+        json_object_put(ajgResponse);
+    }
+    else
+    {
+        
+        PKG_HEAD head;
+        memset(&head, 0, HEAD_LEN);
+        head.version = 1;
+        head.type = 'C';
+        head.direct = 1;
+        memcpy(&head.mach_uuid, &cltopt.mach_uuid, sizeof(head.mach_uuid));
+        
+        /*发送DAEMON的配置信息*/
+        json_object* ajgResponse =  json_object_new_object(); 
+        json_object_object_add (ajgResponse, "hostname", 
+                               json_object_new_string(cltopt.hostname));
+        json_object_object_add (ajgResponse, "username", 
+                               json_object_new_string(cltopt.username));
+        json_object_object_add (ajgResponse, "userid", 
+                               json_object_new_int64(cltopt.userid)); 
+        json_object_object_add (ajgResponse, "r_mach_uuid", 
+                               json_object_new_string(SD_ID128_CONST_STR(cltopt.opt.usr.r_mach_uuid))); 
+
+        const char* ret_str = json_object_to_json_string (ajgResponse);
+        head.dat_len = strlen(ret_str) + 1;
+        head.crc = crc32(0L, ret_str, strlen(ret_str) + 1);
+
+        bufferevent_write(bev, &head, HEAD_LEN);
+        bufferevent_write(bev, ret_str, head.dat_len);
+
+        json_object_put(ajgResponse);
+    }
+
 
     /**
-     * 建立Listen侦听套接字
+     * 建立本地Listen侦听套接字
      */
-    struct evconnlistener *listener;
-    struct sockaddr_in sin;
-    memset(&sin, 0, sizeof(sin));
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = htonl(0);
-    sin.sin_port = htons(cltopt.l_port); /* Port Num */
 
-    listener = evconnlistener_new_bind(base, accept_conn_cb, NULL,
-            LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1/*backlog 连接无限制*/,
-            (struct sockaddr*)&sin, sizeof(sin));
-
-    if (!listener) 
+    int i = 0;
+    for (i=0; i<10; i++)
     {
-            st_d_error("Couldn't create listener");
-            return -1;
+        if (cltopt.opt.usr.maps[i].from) 
+        {
+            struct evconnlistener *listener;
+            struct sockaddr_in sin;
+            memset(&sin, 0, sizeof(sin));
+            sin.sin_family = AF_INET;
+            sin.sin_addr.s_addr = htonl(0);
+            sin.sin_port = htons(cltopt.opt.usr.maps[i].from); /* Port Num */
+
+            listener = evconnlistener_new_bind(base, accept_conn_cb, &cltopt.opt.usr.maps[i],
+                    LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1/*backlog 连接无限制*/,
+                    (struct sockaddr*)&sin, sizeof(sin));
+
+            if (!listener) 
+            {
+                    st_d_error("Couldn't create listener");
+                    return -1;
+            }
+            evconnlistener_set_error_cb(listener, accept_error_cb);
+            cltopt.opt.usr.maps[i].listener = listener;
+        }
+        else
+            break;
     }
-    evconnlistener_set_error_cb(listener, accept_error_cb);
-   
+
+    
 
     /**
      * Main Loop Here
@@ -141,122 +202,18 @@ int main(int argc, char* argv[])
     event_base_loop(base, 0);
 
 
-    evconnlistener_free(listener);
-    event_base_free(base);
+    for (i=0; i<10; i++)
+    {
+        if (cltopt.opt.usr.maps[i].listener) 
+            evconnlistener_free(cltopt.opt.usr.maps[i].listener);
+    }
 
+    
+    event_base_free(base);
     st_d_print("Program terminated!");
     return 0;
 }
 
 
-void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
-{
-    struct event_base *base = bufferevent_get_base(bev);
-    int loop_terminate_flag = 0;
 
-    //只有使用bufferevent_socket_connect进行的连接才会得到CONNECTED的事件
-    if (events & BEV_EVENT_CONNECTED) 
-    {
-        st_d_print("GOT BEV_EVENT_CONNECTED event! ");
-    } 
-    else if (events & BEV_EVENT_ERROR) 
-    {
-        st_d_print("GOT BEV_EVENT_ERROR event! ");
-        loop_terminate_flag = 1;
-    } 
-    else if (events & BEV_EVENT_EOF) 
-    {
-        st_d_print("GOT BEV_EVENT_EOF event! ");
-        bufferevent_free(bev);
-    }
-    else if (events & BEV_EVENT_TIMEOUT) 
-    {
-        st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
-    } 
-    else if (events & BEV_EVENT_READING) 
-    {
-        st_d_print("GOT BEV_EVENT_READING event! ");
-    } 
-    else if (events & BEV_EVENT_WRITING) 
-    {
-        st_d_print("GOT BEV_EVENT_WRITING event! ");
-    }
-
-    if (loop_terminate_flag)
-    {
-        bufferevent_free(bev);
-        event_base_loopexit(base, NULL);
-    }
-
-    return;
-}
-
-/**
- * 读取事件，主要进行数据转发 
- */
-void bufferread_cb(struct bufferevent *bev, void *ptr)
-{
-    char *msg = "SERVER MESSAGE: WOSHINICOL 桃子大人";
-    char buf[1024];
-    int n;
-    struct evbuffer *input = bufferevent_get_input(bev);
-    struct evbuffer *output = bufferevent_get_output(bev);
-
-    while ((n = evbuffer_remove(input, buf, sizeof(buf))) > 0) 
-    {
-        fwrite("BUFFERREAD_CB:", 1, strlen("BUFFERREAD_CB:"), stderr);
-        fwrite(buf, 1, n, stderr);
-    }
-
-    fprintf(stderr, "READ DONE!\n");
-    //bufferevent_write(bev, msg, strlen(msg));
-    evbuffer_add(output, msg, strlen(msg));
-
-    return;
-}
-
-/**
- * 监听套接字响应事件
- */
-static void
-accept_conn_cb(struct evconnlistener *listener,
-    evutil_socket_t fd, struct sockaddr *address, int socklen,
-    void *ctx)
-{ 
-    char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
-
-    getnameinfo (address, socklen,
-               hbuf, sizeof(hbuf),sbuf, sizeof(sbuf),
-               NI_NUMERICHOST | NI_NUMERICSERV);
-
-    st_print("Welcome new connect (host=%s, port=%s)\n", hbuf, sbuf);
-
-    /* We got a new connection! Set up a bufferevent for it. */
-    struct event_base *base = evconnlistener_get_base(listener);
-    struct bufferevent *bev = 
-        bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-
-    /**
-     * 对于服务端，一般都是阻塞在读，而如果要写，一般在read_cb中写回就可以了
-     */
-    bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, NULL);
-    bufferevent_enable(bev, EV_READ|EV_WRITE);
-
-    st_d_print("Allocate and attach new bufferevent for new connectino...");
-
-     return;
-}
-
-static void
-accept_error_cb(struct evconnlistener *listener, void *ctx)
-{
-    struct event_base *base = evconnlistener_get_base(listener);
-    int err = EVUTIL_SOCKET_ERROR();
-
-    st_d_error( "Got an error %d (%s) on the listener. "
-            "Shutting down...\n", err, evutil_socket_error_to_string(err));
-    event_base_loopexit(base, NULL);
-
-    return;
-}
 
