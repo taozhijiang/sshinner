@@ -26,40 +26,33 @@ enum CLT_TYPE {
 };
 
 
-struct portmap {
+typedef struct _portmap {
     unsigned short usrport;
     unsigned short daemonport;
-    struct evconnlistener *listener;
-};
-
-typedef struct _clt_usr_opt
-{
-    sd_id128_t r_mach_uuid;     //
-    struct portmap maps[10];    //本地port转发到远程Daemon的端口
-}CLT_USR_OPT, *P_CLT_USR_OPT;
+    struct bufferevent *bev;
+} PORTMAP, *P_PORTMAP;
 
 
-typedef struct _clt_daemon_opt
-{
-    unsigned short  dummy;   
-}CLT_DAEMON_OPT, *P_CLT_DAEMON_OPT;
+#define MAX_PORTMAP_NUM 10
+
 
 typedef struct _clt_opt
 {
-    enum CLT_TYPE C_TYPE;
-    sd_id128_t      mach_uuid;
-    char hostname   [128];
-    char username   [128];  //
+    enum CLT_TYPE       C_TYPE;
+    sd_id128_t          mach_uuid;
+    char hostname[128];
+    char username[128];  
     unsigned long   userid;
     struct sockaddr_in  srv;
+    struct bufferevent *srv_bev;
 
-    union{
-        CLT_USR_OPT usr;
-        CLT_DAEMON_OPT daemon;
-    }opt;
+    sd_id128_t      session_uuid;
+    PORTMAP         maps[MAX_PORTMAP_NUM];
 }CLT_OPT, *P_CLT_OPT;
 
 
+extern struct event_base *base;
+extern CLT_OPT cltopt;
 
 /**
  * 通用类函数
@@ -85,6 +78,7 @@ void bufferread_cb(struct bufferevent *bev, void *ptr);
  * 客户端与SRV的通信
  */
 void srv_bufferread_cb(struct bufferevent *bev, void *ptr);
-
+P_PORTMAP sc_find_portmap(unsigned short usrport);
+P_PORTMAP sc_find_create_portmap(unsigned short daemonport);
 
 #endif

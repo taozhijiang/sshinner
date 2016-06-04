@@ -26,11 +26,12 @@ static void usage(void)
     fprintf(stderr, "  *******************************************************************\n");
 }
 
+struct event_base *base;
+CLT_OPT cltopt;
+
 int main(int argc, char* argv[])
 {
     int opt_g = 0;
-    struct event_base *base;
-    CLT_OPT cltopt;
     memset(&cltopt, 0, sizeof(CLT_OPT));
 
     cltopt.C_TYPE = C_USR;
@@ -47,7 +48,7 @@ int main(int argc, char* argv[])
                 exit(EXIT_SUCCESS);
         }
     }
-cltopt.C_TYPE = C_DAEMON;
+
     if(load_settings_client(&cltopt) == RET_NO)
     {
         st_d_error("Loading settings.json error!");
@@ -61,10 +62,12 @@ cltopt.C_TYPE = C_DAEMON;
                cltopt.hostname);
 
     if (cltopt.C_TYPE == C_DAEMON) 
+    {
+        cltopt.session_uuid = cltopt.mach_uuid;
         st_d_print("PLEASE REMEMEBER SET MACH_ID FOR USER TYPE!");
+    }
 
     dump_clt_opts(&cltopt);
-
 
     /*带配置产生event_base对象*/
     struct event_config *cfg;
@@ -96,21 +99,14 @@ cltopt.C_TYPE = C_DAEMON;
     }
 
 
-    evutil_make_socket_nonblocking(srv_fd);
-    struct bufferevent *bev = 
-        bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
-    bufferevent_setcb(bev, srv_bufferread_cb, NULL, NULL, NULL);
-    bufferevent_enable(bev, EV_READ|EV_WRITE);
-
     if (cltopt.C_TYPE == C_DAEMON) 
     {
         PKG_HEAD head;
         memset(&head, 0, HEAD_LEN);
 
-        head.version = 1;
         head.type = 'C';
-        head.direct = 2;
-        memcpy(&head.mach_uuid, &cltopt.mach_uuid, sizeof(cltopt.mach_uuid));
+        head.direct = DAEMON_USR; 
+        head.mach_uuid = cltopt.mach_uuid;
         
         /*发送DAEMON的配置信息*/
         json_object* ajgResponse =  json_object_new_object(); 
@@ -125,8 +121,19 @@ cltopt.C_TYPE = C_DAEMON;
         head.dat_len = strlen(ret_str) + 1;
         head.crc = crc32(0L, ret_str, strlen(ret_str) + 1);
 
-        bufferevent_write(bev, &head, HEAD_LEN);
-        bufferevent_write(bev, ret_str, head.dat_len);
+        write(srv_fd, &head, HEAD_LEN);
+        write(srv_fd, ret_str, head.dat_len);
+
+        PKG_HEAD ret_head;
+        read(srv_fd, &ret_head, HEAD_LEN); 
+        if (ret_head.type == 'C' && ret_head.direct == USR_DAEMON && ret_head.ext == 'O') 
+        {
+            st_d_print("Server Response OK!");
+        }
+        else
+        {
+            SYS_ABORT("Server Response Fail!");
+        }
 
         json_object_put(ajgResponse);
     }
@@ -135,10 +142,9 @@ cltopt.C_TYPE = C_DAEMON;
         
         PKG_HEAD head;
         memset(&head, 0, HEAD_LEN);
-        head.version = 1;
         head.type = 'C';
-        head.direct = 1;
-        memcpy(&head.mach_uuid, &cltopt.mach_uuid, sizeof(head.mach_uuid));
+        head.direct = USR_DAEMON; 
+        head.mach_uuid = cltopt.mach_uuid;
         
         /*发送DAEMON的配置信息*/
         json_object* ajgResponse =  json_object_new_object(); 
@@ -149,66 +155,79 @@ cltopt.C_TYPE = C_DAEMON;
         json_object_object_add (ajgResponse, "userid", 
                                json_object_new_int64(cltopt.userid)); 
         json_object_object_add (ajgResponse, "r_mach_uuid", 
-                               json_object_new_string(SD_ID128_CONST_STR(cltopt.opt.usr.r_mach_uuid))); 
+                               json_object_new_string(SD_ID128_CONST_STR(cltopt.session_uuid))); 
 
         const char* ret_str = json_object_to_json_string (ajgResponse);
         head.dat_len = strlen(ret_str) + 1;
         head.crc = crc32(0L, ret_str, strlen(ret_str) + 1);
 
-        bufferevent_write(bev, &head, HEAD_LEN);
-        bufferevent_write(bev, ret_str, head.dat_len);
+        write(srv_fd, &head, HEAD_LEN); 
+        write(srv_fd, ret_str, head.dat_len);
+
+        PKG_HEAD ret_head;
+        read(srv_fd, &ret_head, HEAD_LEN);
+        if (ret_head.type == 'C' && ret_head.direct == DAEMON_USR && ret_head.ext == 'O') 
+        {
+            st_d_print("Server Response OK!");
+        }
+        else
+        {
+            SYS_ABORT("Server Response Fail!");
+        }
 
         json_object_put(ajgResponse);
     }
 
 
+
     /**
-     * 建立本地Listen侦听套接字
+     * USR 建立本地Listen侦听套接字
      */
 
-    int i = 0;
-    for (i=0; i<10; i++)
+    if (cltopt.C_TYPE == C_USR)
     {
-        if (cltopt.opt.usr.maps[i].from) 
+        int i = 0;
+        for (i=0; i<MAX_PORTMAP_NUM; i++)
         {
-            struct evconnlistener *listener;
-            struct sockaddr_in sin;
-            memset(&sin, 0, sizeof(sin));
-            sin.sin_family = AF_INET;
-            sin.sin_addr.s_addr = htonl(0);
-            sin.sin_port = htons(cltopt.opt.usr.maps[i].from); /* Port Num */
-
-            listener = evconnlistener_new_bind(base, accept_conn_cb, &cltopt.opt.usr.maps[i],
-                    LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1/*backlog 连接无限制*/,
-                    (struct sockaddr*)&sin, sizeof(sin));
-
-            if (!listener) 
+            if (cltopt.maps[i].usrport) 
             {
-                    st_d_error("Couldn't create listener");
-                    return -1;
-            }
-            evconnlistener_set_error_cb(listener, accept_error_cb);
-            cltopt.opt.usr.maps[i].listener = listener;
-        }
-        else
-            break;
-    }
+                struct evconnlistener *listener;
+                struct sockaddr_in sin;
+                memset(&sin, 0, sizeof(sin));
+                sin.sin_family = AF_INET;
+                sin.sin_addr.s_addr = htonl(0);
+                sin.sin_port = htons(cltopt.maps[i].usrport); /* Port Num */
 
+                listener = evconnlistener_new_bind(base, accept_conn_cb, &cltopt.maps[i],
+                        LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1/*backlog 连接无限制*/,
+                        (struct sockaddr*)&sin, sizeof(sin));
+
+                if (!listener) 
+                {
+                        st_d_error("Couldn't create listener");
+                        return -1;
+                }
+                evconnlistener_set_error_cb(listener, accept_error_cb);
+                cltopt.maps[i].bev = NULL;
+            }
+            else
+                break;
+        }
+    }
     
+
+    evutil_make_socket_nonblocking(srv_fd);
+    struct bufferevent *srv_bev = 
+        bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(srv_bev, srv_bufferread_cb, NULL, NULL, NULL);
+    cltopt.srv_bev = srv_bev;
+    bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
     /**
      * Main Loop Here
      */
     event_base_loop(base, 0);
-
-
-    for (i=0; i<10; i++)
-    {
-        if (cltopt.opt.usr.maps[i].listener) 
-            evconnlistener_free(cltopt.opt.usr.maps[i].listener);
-    }
-
-    
+        
     event_base_free(base);
     st_d_print("Program terminated!");
     return 0;

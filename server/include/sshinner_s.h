@@ -73,8 +73,10 @@ void bufferread_cb(struct bufferevent *bev, void *ptr);
 static RET_T ss_new_connect_from_daemon(P_PKG_HEAD p_head, char* dat);
 static RET_T ss_new_connect_from_usr(P_PKG_HEAD p_head, char* dat);
 
-static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat);
-static RET_T ss_handle_dat(P_PKG_HEAD p_head, void* dat);
+static RET_T ss_handle_ctl(struct bufferevent *bev, 
+                           P_PKG_HEAD p_head, char* dat);
+static RET_T ss_handle_dat(struct bufferevent *bev,
+                           P_PKG_HEAD p_head, void* dat);
 
 
 #endif

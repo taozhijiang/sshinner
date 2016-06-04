@@ -65,14 +65,14 @@ extern RET_T load_settings_client(P_CLT_OPT p_opt)
 
         if (p_opt->C_TYPE == C_DAEMON) 
         {
-            p_opt->opt.daemon.dummy = 0; 
+            p_opt->session_uuid = p_opt->mach_uuid;
         }
         else
         {
             if (json_object_object_get_ex(p_class,"r_mach_uuid",&p_store_obj))
             {
                 ptr = json_object_get_string(p_store_obj); 
-                sd_id128_from_string(ptr, &p_opt->opt.usr.r_mach_uuid); 
+                sd_id128_from_string(ptr, &p_opt->session_uuid); 
             }
 
             if (json_object_object_get_ex(p_class,"portmaps",&p_store_obj))
@@ -83,10 +83,11 @@ extern RET_T load_settings_client(P_CLT_OPT p_opt)
                 for (i=0; i<len; ++i)
                 {
                     json_object* p_tmp = json_object_array_get_idx(p_store_obj, i);
-                    p_opt->opt.usr.maps[i].usrport    = json_object_get_int(
+                    p_opt->maps[i].usrport    = json_object_get_int(
                                              json_object_object_get(p_tmp, "usrport"));
-                    p_opt->opt.usr.maps[i].daemonport = json_object_get_int(
+                    p_opt->maps[i].daemonport = json_object_get_int(
                                              json_object_object_get(p_tmp, "daemonport"));
+                    p_opt->maps[i].bev = NULL;
                 }
             }
         }
@@ -116,20 +117,16 @@ extern void dump_clt_opts(P_CLT_OPT p_opt)
     st_d_print("SERVERPORT:%d", ntohs(p_opt->srv.sin_port));
 
     st_d_print("");
-    if (p_opt->C_TYPE == C_DAEMON) 
+    st_d_print("SESSION_UUID: %s", SD_ID128_CONST_STR(p_opt->session_uuid));
+    if (p_opt->C_TYPE == C_USR) 
     {
-        st_d_print("DUMMY:%d", p_opt->opt.daemon.dummy); 
-    }
-    else
-    {
-        st_d_print("ACC_MACHID:%s", SD_ID128_CONST_STR(p_opt->opt.usr.r_mach_uuid));
         int i = 0;
-        for (i=0; i<10; i++)
+        for (i = 0; i < MAX_PORTMAP_NUM; i++) 
         {
-            if (p_opt->opt.usr.maps[i].from) 
+            if (p_opt->maps[i].usrport) 
             {
-                st_d_print("FROM:%d, TO:%d", p_opt->opt.usr.maps[i].from,
-                           p_opt->opt.usr.maps[i].to);
+                st_d_print("FROM:%d, TO:%d", p_opt->maps[i].usrport, 
+                           p_opt->maps[i].daemonport); 
             }
             else
                 break;
@@ -139,37 +136,143 @@ extern void dump_clt_opts(P_CLT_OPT p_opt)
     return;
 }
 
-RET_T clt_daemon_send_data(P_CLT_OPT p_opt, void* data, int len)
-{
-
-    return RET_YES;
-}
-
-RET_T clt_usr_send_data(P_CLT_OPT p_opt, void* data, int len)
-{
-
-    return RET_YES;
-}
 
 /**
  * 客户端和远程服务器的交互
  */
 void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
-    char buf[1024];
-    int n;
+    size_t n = 0;
+    PKG_HEAD head;
+    RET_T  ret;
+
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
-    while ((n = evbuffer_remove(input, buf, sizeof(buf))) > 0) 
+    if ( evbuffer_remove(input, &head, HEAD_LEN) != HEAD_LEN)
     {
-        fwrite("BUFFERREAD_CB:", 1, strlen("BUFFERREAD_CB:"), stderr);
-        fwrite(buf, 1, n, stderr);
+        st_d_print("Can not read HEAD_LEN(%d), drop it!", HEAD_LEN);
+        return;
     }
 
-    fprintf(stderr, "READ DONE!\n");
-    //bufferevent_write(bev, msg, strlen(msg));
-    return;
+    if (!sd_id128_equal(head.mach_uuid, cltopt.session_uuid))
+    {
+        SYS_ABORT("session_uuid not equal!");
+    }
+
+    if (head.type == 'C') 
+    {
+        if (head.ext == 'E') 
+        {
+            SYS_ABORT("SERVER RETURNED ERROR!");
+        }
+    }
+    else
+    {
+        void *dat = malloc(head.dat_len);
+        if (!dat)
+        {
+            st_d_error("Allocating %d error!", head.dat_len); 
+            return;
+        }
+        
+        memset(dat, 0, head.dat_len);
+        size_t offset = 0;
+        while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
+        {
+            if (n < (head.dat_len-offset)) 
+            {
+                offset += n;
+                continue;
+            }
+            else
+            break;
+        }
+
+        ulong crc = crc32(0L, dat, head.dat_len);
+        if (crc != head.crc) 
+        {
+            st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
+            free(dat);
+            return;
+        }
+
+        P_PORTMAP p_map = NULL;
+
+        // 数据，根据 USR DAEMON 角色处理
+        if (cltopt.C_TYPE == C_DAEMON) 
+        {
+            if (head.direct != USR_DAEMON) 
+            {
+                SYS_ABORT("Package direction check error!");
+            }
+
+            p_map = sc_find_create_portmap(head.daemonport); 
+            if (!p_map) 
+            {
+                SYS_ABORT("USR should already exist!");
+            }
+
+            if (!p_map->bev) 
+            {
+                st_d_print("Daemon create local ev!");
+
+                p_map->usrport = head.usrport;
+
+                int fd = socket(AF_INET, SOCK_STREAM, 0);
+                int reuseaddr_on = 1;
+                if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
+            		sizeof(reuseaddr_on)) == -1)
+                {
+                    st_d_print("Reuse socket opt faile!\n");
+                    exit(EXIT_FAILURE);
+                }
+                struct sockaddr_in  local_srv;
+                local_srv.sin_family = AF_INET;
+                local_srv.sin_addr.s_addr = inet_addr("127.0.0.1");
+                local_srv.sin_port = htons(head.daemonport);
+
+                if (connect(fd, (struct sockaddr *)&local_srv, sizeof(local_srv))) 
+                {
+                    SYS_ABORT("Connect to server failed!\n"); 
+                }
+                else
+                {
+                    st_d_print("Connected to local OK!");
+                }
+
+                evutil_make_socket_nonblocking(fd);
+                struct event_base *base = bufferevent_get_base(bev);
+                struct bufferevent *n_bev = 
+                    bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+                bufferevent_setcb(n_bev, bufferread_cb, NULL, NULL, p_map);
+                p_map->bev = n_bev;
+                bufferevent_enable(n_bev, EV_READ|EV_WRITE);
+
+            }
+
+
+            bufferevent_write(p_map->bev, dat, head.dat_len);
+            free(dat);
+
+        }
+        else if (cltopt.C_TYPE == C_USR) 
+        {
+            if (head.direct != DAEMON_USR) 
+            {
+                SYS_ABORT("Package direction check error!");
+            }
+
+            p_map = sc_find_portmap(head.usrport);
+            if (!p_map || !p_map->bev) 
+            {
+                SYS_ABORT("USR should already exist!");
+            }
+
+            bufferevent_write(p_map->bev, dat, head.dat_len);
+            free(dat);
+        }
+    }
 }
 
 
@@ -219,53 +322,89 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     return;
 }
 
+
+/**
+ * 客户端程序，USR/DAEMON都是从应用程序读取到数据了，然后推送到SRV进行转发到服务器 
+ */
 void bufferread_cb(struct bufferevent *bev, void *ptr)
 {
-    char *msg = "SERVER MESSAGE: WOSHINICOL 桃子大人";
-    char buf[1024];
-    int n;
+    P_PORTMAP p_map = (P_PORTMAP)ptr; 
+    char buff[4096];
+    PKG_HEAD head;
+    memset(&head, 0, HEAD_LEN);
+    size_t n = 0;
+
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
-    while ((n = evbuffer_remove(input, buf, sizeof(buf))) > 0) 
+    if (cltopt.C_TYPE == C_USR)
     {
-        fwrite("BUFFERREAD_CB:", 1, strlen("BUFFERREAD_CB:"), stderr);
-        fwrite(buf, 1, n, stderr);
-    }
+        head.type = 'D';
+        head.direct = USR_DAEMON;    // USR->DAEMON
+        head.mach_uuid = cltopt.session_uuid;
+        head.daemonport = p_map->daemonport;
+        head.usrport = p_map->usrport;
 
-    fprintf(stderr, "READ DONE!\n");
-    //bufferevent_write(bev, msg, strlen(msg));
-    evbuffer_add(output, msg, strlen(msg));
+        while ((n = evbuffer_remove(input, buff, sizeof(buff))) > 0) 
+        {
+            head.dat_len = n;
+            head.crc = crc32(0L, buff, n);
+            bufferevent_write(cltopt.srv_bev, &head, HEAD_LEN);
+            bufferevent_write(cltopt.srv_bev, buff, head.dat_len);
+        }
+    }
+    else
+    {
+        head.type = 'D';
+        head.direct = DAEMON_USR;    // USR->DAEMON
+        head.mach_uuid = cltopt.session_uuid;
+        head.daemonport = p_map->daemonport;
+        head.usrport = p_map->usrport;
+
+        while ((n = evbuffer_remove(input, buff, sizeof(buff))) > 0) 
+        {
+            head.dat_len = n;
+            head.crc = crc32(0L, buff, n);
+            bufferevent_write(cltopt.srv_bev, &head, HEAD_LEN);
+            bufferevent_write(cltopt.srv_bev, buff, head.dat_len);
+        }
+    }
 
     return;
 }
 
+/**
+ * 只会在USR端被调用
+ */
 void accept_conn_cb(struct evconnlistener *listener,
     evutil_socket_t fd, struct sockaddr *address, int socklen,
     void *ctx)
-{ 
+{
+    P_PORTMAP p_map = (P_PORTMAP)ctx; 
     char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
 
     getnameinfo (address, socklen,
                hbuf, sizeof(hbuf),sbuf, sizeof(sbuf),
                NI_NUMERICHOST | NI_NUMERICSERV);
 
-    st_print("Welcome new connect (host=%s, port=%s)\n", hbuf, sbuf);
+    st_print("WELCOME NEW CONNECT (HOST=%s, PORT=%s)\n", hbuf, sbuf);
 
     /* We got a new connection! Set up a bufferevent for it. */
     struct event_base *base = evconnlistener_get_base(listener);
     struct bufferevent *bev = 
         bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
 
+    p_map->bev = bev;
+
     /**
      * 对于服务端，一般都是阻塞在读，而如果要写，一般在read_cb中写回就可以了
      */
-    bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, NULL);
+    bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, p_map);
     bufferevent_enable(bev, EV_READ|EV_WRITE);
 
     st_d_print("Allocate and attach new bufferevent for new connectino...");
 
-     return;
+    return;
 }
 
 void accept_error_cb(struct evconnlistener *listener, void *ctx)
@@ -280,4 +419,46 @@ void accept_error_cb(struct evconnlistener *listener, void *ctx)
     return;
 }
 
+// used from USR SIDE
+P_PORTMAP sc_find_portmap(unsigned short usrport)
+{
+    P_PORTMAP p_map = NULL;
+    int i = 0;
 
+    for (i = 0; i < MAX_PORTMAP_NUM; i++) 
+    {
+        if (cltopt.maps[i].usrport == usrport) 
+        {
+            p_map = &cltopt.maps[i];
+        }
+    }
+
+    return p_map;
+}
+
+// used from DAEMON SIDE
+P_PORTMAP sc_find_create_portmap(unsigned short daemonport)
+{
+    P_PORTMAP p_map = NULL;
+    int i = 0;
+
+    for (i = 0; i < MAX_PORTMAP_NUM; i++) 
+    {
+        if (cltopt.maps[i].daemonport == daemonport) 
+        {
+            p_map = &cltopt.maps[i];
+        }
+    }
+
+    for (i = 0; i < MAX_PORTMAP_NUM; i++) 
+    {
+        if (cltopt.maps[i].daemonport == 0) 
+        {
+            p_map = &cltopt.maps[i];
+            p_map->daemonport = daemonport;
+            p_map->bev = NULL;
+        }
+    }
+
+    return p_map;
+}

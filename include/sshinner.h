@@ -6,13 +6,17 @@
 /**
  * 规定客户端和服务器端通信的数据包格式： 
  */
+
+enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
+};
+
 typedef struct _pkg_head {
-	 char version;      // 1
-     char type;         // 'C'/'D'
-     char direct;       // 1: USR->DAEMON, 2: DAEMON->USR
-     char pad;          // NC
+     char type;                 // 'C'/'D'
+     enum DIREC direct;         // 1: USR->DAEMON, 2: DAEMON->USR
+     char ext;                  // 对于'C'类型额外的参数可用　'O'->OK 'E'->Error
      sd_id128_t mach_uuid;
-     unsigned short port;   //转发的目标端口
+     unsigned short daemonport;
+     unsigned short usrport;   
      ulong    crc;
      unsigned int   dat_len;    //实际的负载长度
  } PKG_HEAD, *P_PKG_HEAD;

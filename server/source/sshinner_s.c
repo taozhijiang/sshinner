@@ -119,7 +119,6 @@ void accept_conn_cb(struct evconnlistener *listener,
     getnameinfo (address, socklen,
                hbuf, sizeof(hbuf),sbuf, sizeof(sbuf),
                NI_NUMERICHOST | NI_NUMERICSERV);
-
     st_print("WELCOME NEW CONNECTION FROM (HOST=%s, PORT=%s)\n", hbuf, sbuf);
 
     /* We got a new connection! Set up a bufferevent for it. */
@@ -133,7 +132,7 @@ void accept_conn_cb(struct evconnlistener *listener,
     bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, NULL);
     bufferevent_enable(bev, EV_READ|EV_WRITE);
 
-    st_d_print("Allocate and attach new bufferevent for new connectino...");
+    st_d_print("Allocate and attach new bufferevent for new connectino ok ...");
 
     return;
 }
@@ -169,7 +168,7 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
         return;
     }
 
-    void *dat = malloc(head.dat_len);
+    char *dat = malloc(head.dat_len);
     if (!dat)
     {
         st_d_error("Allocating %d error!", head.dat_len); 
@@ -193,16 +192,17 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
     if (crc != head.crc) 
     {
         st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
+        st_d_print("%s", (char*) dat);
         return;
     }
 
     if (head.type == 'C') 
     {
-        ret = ss_handle_ctl(&head, (char *)dat);
+        ret = ss_handle_ctl(bev, &head, (char *)dat);
     }
     else if (head.type == 'D')
     {
-        //ret = ss_handle_dat(&head, dat);
+        ret = ss_handle_dat(bev, &head, dat);
     }
     else
     {
@@ -215,16 +215,17 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
 extern SRV_OPT srvopt;
 extern struct  event_base *base;
 
-static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat)
+static RET_T ss_handle_ctl(struct bufferevent *bev, 
+                           P_PKG_HEAD p_head, char* dat)
 {
     json_object *new_obj = json_tokener_parse(dat);
     json_object *p_store_obj = NULL;
-    P_ACCT_ITEM p_acct_item = NULL;
-    P_ACTIV_ITEM p_activ_item = NULL;
+    P_ACCT_ITEM     p_acct_item = NULL;
+    P_ACTIV_ITEM    p_activ_item = NULL;
 
     char username   [128];
     unsigned long   userid;
-    char uuid_s     [32];
+    char uuid_s     [33];
     sd_id128_t      mach_uuid;
     
     if (!new_obj)
@@ -237,7 +238,7 @@ static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat)
     userid = json_object_get_int(json_object_object_get(new_obj,"userid"));
 
     // USR->DAEMON
-    if (p_head->direct == 1) 
+    if (p_head->direct == USR_DAEMON) 
     {
         p_acct_item = ss_find_acct_item(&srvopt, username, userid);
         if (!p_acct_item)
@@ -247,17 +248,38 @@ static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat)
         }
 
         json_fetch_and_copy(new_obj, "r_mach_uuid", uuid_s, sizeof(uuid_s));
-        sd_id128_from_string(uuid_s, &mach_uuid);
-
-        if (p_activ_item = ss_uuid_search(&srvopt.uuid_tree, mach_uuid))
+        if (sd_id128_from_string(uuid_s, &mach_uuid) != 0)
         {
-            st_d_print("%s", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
+            st_d_error("Convert %s failed!", uuid_s);
+            return;
         }
+        p_activ_item = ss_uuid_search(&srvopt.uuid_tree, mach_uuid);
+
+        if (!p_activ_item)
+        {
+            st_d_print("Activ %s not exist!", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
+            return RET_NO;
+        }
+
+
+        p_activ_item->bev_usr = bev;
+            
+        //　回复USR OK
+        PKG_HEAD ret_head;
+        memset(&ret_head, 0, HEAD_LEN);
+        ret_head.type = 'C';
+        ret_head.mach_uuid = p_activ_item->mach_uuid;
+        ret_head.ext = 'O';
+        ret_head.direct = DAEMON_USR; 
+
+        bufferevent_write(bev, &ret_head, HEAD_LEN);
+
+        st_d_print("Connection created for %s", SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
 
         // 查找到了ACTIV_ITEM，进行实际的传输关联
     }
     // DAEMON->USR
-    else if (p_head->direct == 2) 
+    else if (p_head->direct == DAEMON_USR) 
     {
         p_acct_item = ss_find_acct_item(&srvopt, username, userid);
         if (p_acct_item || ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid)) 
@@ -287,8 +309,7 @@ static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat)
 
         p_activ_item->base = base;
         p_activ_item->mach_uuid = p_head->mach_uuid;
-        p_activ_item->bev_daemon = NULL;
-        p_activ_item->bev_usr = NULL;
+        p_activ_item->bev_daemon = bev;
 
         slist_add(&p_acct_item->list, &srvopt.acct_items);
         slist_add(&p_activ_item->list, &p_acct_item->items);
@@ -306,5 +327,57 @@ static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat)
             st_d_print("%s", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
         }
 #endif
+
+        //　回复DAEMON OK
+                //　回复USR OK
+        PKG_HEAD ret_head;
+        memset(&ret_head, 0, HEAD_LEN);
+        ret_head.type = 'C';
+        ret_head.mach_uuid = p_activ_item->mach_uuid;
+        ret_head.ext = 'O';
+        ret_head.direct = USR_DAEMON; 
+
+        bufferevent_write(bev, &ret_head, HEAD_LEN);
+
     }
+}
+
+
+static RET_T ss_handle_dat(struct bufferevent *bev,
+                           P_PKG_HEAD p_head, void* dat)
+{
+
+    P_ACTIV_ITEM p_activ_item = NULL;
+
+    p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid);
+    if (!p_activ_item)
+    {
+        SYS_ABORT("%s NOT FOUND!", SD_ID128_CONST_STR(p_head->mach_uuid));
+    }
+
+     // USR->DAEMON
+    if (p_head->direct == USR_DAEMON) 
+    {
+        if (bev != p_activ_item->bev_usr ||
+            !p_activ_item->bev_daemon) 
+        {
+            SYS_ABORT("BEV CHECK ERROR!");
+        }
+
+        bufferevent_write(p_activ_item->bev_daemon, p_head, HEAD_LEN);
+        bufferevent_write(p_activ_item->bev_daemon, dat, p_head->dat_len); 
+    }
+    else if (p_head->direct == DAEMON_USR) 
+    {
+        if (bev != p_activ_item->bev_daemon ||
+            !p_activ_item->bev_usr) 
+        {
+            SYS_ABORT("BEV CHECK ERROR!");
+        }
+
+        bufferevent_write(p_activ_item->bev_usr, p_head, HEAD_LEN);
+        bufferevent_write(p_activ_item->bev_usr, dat, p_head->dat_len); 
+    }
+
+    return RET_YES;
 }
