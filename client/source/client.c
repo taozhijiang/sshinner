@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
                 exit(EXIT_SUCCESS);
         }
     }
-
+cltopt.C_TYPE = C_DAEMON;
     if(load_settings_client(&cltopt) == RET_NO)
     {
         st_d_error("Loading settings.json error!");

@@ -1,3 +1,6 @@
+#ifndef _SSHINNER_C_H
+#define _SSHINNER_C_H
+
 #include <stdio.h>
 
 #include <systemd/sd-id128.h> 
@@ -12,6 +15,7 @@
 #include <event2/event.h>
 #include <event2/bufferevent.h>
 
+
 #include "sshinner.h"
 #include "st_others.h"
 #include "st_slist.h"
@@ -23,8 +27,8 @@ enum CLT_TYPE {
 
 
 struct portmap {
-    unsigned short from;
-    unsigned short to;
+    unsigned short usrport;
+    unsigned short daemonport;
     struct evconnlistener *listener;
 };
 
@@ -83,4 +87,4 @@ void bufferread_cb(struct bufferevent *bev, void *ptr);
 void srv_bufferread_cb(struct bufferevent *bev, void *ptr);
 
 
-
+#endif

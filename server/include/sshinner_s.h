@@ -1,3 +1,6 @@
+#ifndef _SSHINNER_S_H
+#define _SSHINNER_C_H
+
 #include <errno.h>
 #include <stdio.h>
 
@@ -15,50 +18,37 @@
 #include <event2/event.h>
 #include <event2/bufferevent.h>
 
+
+#include "rbtree.h"
+
 #include "st_others.h"
 #include "st_slist.h"
 #include "sshinner.h"
 
 
-typedef struct {
-    pthread_t thread_id;        /* unique ID of this thread */
-    struct event_base *base;    /* libevent handle this thread uses */
-    int notify_receive_fd;      /* receiving end of notify pipe */
-    int notify_send_fd;         /* sending end of notify pipe */
-} WORKER_THREAD;
+typedef struct _activ_item {
+    SLIST_HEAD         list;
+    struct rb_node     node;
+    struct event_base  *base;
+    sd_id128_t         mach_uuid;   // DEAMON机器的会话ID
+    struct bufferevent *bev_daemon;
+    struct bufferevent *bev_usr;
+} ACTIV_ITEM, *P_ACTIV_ITEM;
 
+typedef struct _acct_item {
+    char username   [128];  //A
+    unsigned long   userid;
+    SLIST_HEAD      list;   //自身链表
+    SLIST_HEAD      items;  //activ链表头
+} ACCT_ITEM, *P_ACCT_ITEM;
 
 typedef struct _srv_opt
 {
     unsigned short port;
-    WORKER_THREAD  threads[5];
-    SLIST_HEAD     acct;
+    struct rb_root uuid_tree;
+    SLIST_HEAD     acct_items;
 }SRV_OPT, *P_SRV_OPT;
 
-
-enum CLT_TYPE {
-    C_DAEMON, C_USR,
-};
-
-typedef struct _conn_item {
-    enum CLT_TYPE c_type;
-    int  sk_in;
-    int  sk_out;
-} CONN_ITEM, *P_CONN_ITEM;
-
-typedef struct _acct_item {
-    SLIST_HEAD      list;
-    char username   [128];  //A
-    unsigned long   userid;
-    CONN_ITEM conns[10];
-} ACCT_ITEM, *P_ACCT_ITEM;
-
-typedef struct _active_item {
-    struct event_base *base;
-    sd_id128_t  mach_uuid;   //B
-    P_CONN_ITEM p_daemon;
-    P_CONN_ITEM p_usr;
-} ACTIVE_ITEM, *P_ACTIVE_ITEM;
 
 /**
  * 工具类函数
@@ -80,3 +70,11 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
  * 数据转发和处理类函数
  */
 void bufferread_cb(struct bufferevent *bev, void *ptr);
+static RET_T ss_new_connect_from_daemon(P_PKG_HEAD p_head, char* dat);
+static RET_T ss_new_connect_from_usr(P_PKG_HEAD p_head, char* dat);
+
+static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat);
+static RET_T ss_handle_dat(P_PKG_HEAD p_head, void* dat);
+
+
+#endif

@@ -83,10 +83,10 @@ extern RET_T load_settings_client(P_CLT_OPT p_opt)
                 for (i=0; i<len; ++i)
                 {
                     json_object* p_tmp = json_object_array_get_idx(p_store_obj, i);
-                    p_opt->opt.usr.maps[i].from = json_object_get_int(
-                                                    json_object_object_get(p_tmp, "from"));
-                    p_opt->opt.usr.maps[i].to = json_object_get_int(
-                                                    json_object_object_get(p_tmp, "to"));
+                    p_opt->opt.usr.maps[i].usrport    = json_object_get_int(
+                                             json_object_object_get(p_tmp, "usrport"));
+                    p_opt->opt.usr.maps[i].daemonport = json_object_get_int(
+                                             json_object_object_get(p_tmp, "daemonport"));
                 }
             }
         }

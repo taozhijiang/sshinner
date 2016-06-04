@@ -11,7 +11,7 @@ typedef struct _pkg_head {
      char type;         // 'C'/'D'
      char direct;       // 1: USR->DAEMON, 2: DAEMON->USR
      char pad;          // NC
-     char mach_uuid[16];
+     sd_id128_t mach_uuid;
      unsigned short port;   //转发的目标端口
      ulong    crc;
      unsigned int   dat_len;    //实际的负载长度
@@ -20,7 +20,8 @@ static const int HEAD_LEN = sizeof(PKG_HEAD);
 #define GET_PKG_HEAD(buf) ((P_PKG_HEAD)buf)
 #define GET_PKG_BODY(buf) ((void*)((char*)buf)+HEAD_LEN)
 
-
+#include <systemd/sd-id128.h> 
+static const int MACH_UUID_LEN = sizeof(sd_id128_t);
 
 
 #endif /*_SSHINNER_H*/

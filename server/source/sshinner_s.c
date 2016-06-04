@@ -7,6 +7,23 @@
 
 #include "sshinner_s.h"
 
+static RET_T json_fetch_and_copy(struct json_object *p_obj, const char* key, char* store, int max_len)
+{
+    json_object *p_store_obj = NULL;
+
+    if (!p_obj || !key || !strlen(key) || !store)
+        return RET_NO;
+
+    if (json_object_object_get_ex(p_obj, key, &p_store_obj) &&
+        json_object_get_string_len(p_store_obj))
+    {
+        strncpy(store, json_object_get_string(p_store_obj), max_len);
+        return RET_YES;
+    }
+
+    return RET_NO;
+}
+
 extern RET_T load_settings_server(P_SRV_OPT p_opt)
 {
     json_object *p_obj = NULL;
@@ -134,67 +151,6 @@ void accept_error_cb(struct evconnlistener *listener, void *ctx)
 }
 
 
-
-#if 0
-extern P_SESSION_OBJ session_search(struct rb_root *root, sd_id128_t mach_uuid)
-{
-    struct rb_node *node = root->rb_node;
-    P_SESSION_OBJ p_sesson_obj = NULL;
-
-    while (node)
-    {
-        p_sesson_obj = container_of(node, SESSION_OBJ, node);
-
-        if (session_id < p_sesson_obj->session_id) 
-            node = node->rb_left;
-        else if (session_id > p_sesson_obj->session_id)
-            node = node->rb_right;
-        else
-            return p_sesson_obj;
-    }
-
-    return NULL;
-}
-
-
-extern RET_T session_insert(struct rb_root *root, P_SESSION_OBJ data)
-{
-    struct rb_node **new = &(root->rb_node), *parent = NULL;
-
-    /* Figure out where to put new node */
-    while (*new)
-    {
-        P_SESSION_OBJ this = container_of(*new, SESSION_OBJ, node);
-
-        parent = *new;
-        if ( data->session_id < this->session_id ) 
-            new = &((*new)->rb_left);
-        else if ( data->session_id > this->session_id )
-            new = &((*new)->rb_right);
-        else
-            return RET_NO;
-    }
-
-    /* Add new node and rebalance tree. */
-    rb_link_node(&data->node, parent, new);
-    rb_insert_color(&data->node, root);
-
-    return RET_YES;
-}
-
-
-extern void session_erase(P_SESSION_OBJ p_session_obj, struct rb_root *tree)
-{
-    if (!p_session_obj || ! tree)
-        return;
-
-    return rb_erase(&p_session_obj->node, tree);
-}
-
-#endif
-
-
-
 /**
  * 读取事件，主要进行数据转发 
  */
@@ -202,6 +158,8 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     size_t n = 0;
     PKG_HEAD head;
+    RET_T  ret;
+
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
@@ -211,7 +169,7 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
         return;
     }
 
-    char *dat = malloc(head.dat_len);
+    void *dat = malloc(head.dat_len);
     if (!dat)
     {
         st_d_error("Allocating %d error!", head.dat_len); 
@@ -231,8 +189,6 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
         break;
     }
 
-    st_d_print("REVING %s", dat);
-
     ulong crc = crc32(0L, dat, head.dat_len);
     if (crc != head.crc) 
     {
@@ -240,8 +196,115 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
         return;
     }
 
-    st_d_print("RECV:%s", (char*)dat);
+    if (head.type == 'C') 
+    {
+        ret = ss_handle_ctl(&head, (char *)dat);
+    }
+    else if (head.type == 'D')
+    {
+        //ret = ss_handle_dat(&head, dat);
+    }
+    else
+    {
+        SYS_ABORT("Error type: %c!", head.type); 
+    }
 
     return;
 }
 
+extern SRV_OPT srvopt;
+extern struct  event_base *base;
+
+static RET_T ss_handle_ctl(P_PKG_HEAD p_head, char* dat)
+{
+    json_object *new_obj = json_tokener_parse(dat);
+    json_object *p_store_obj = NULL;
+    P_ACCT_ITEM p_acct_item = NULL;
+    P_ACTIV_ITEM p_activ_item = NULL;
+
+    char username   [128];
+    unsigned long   userid;
+    char uuid_s     [32];
+    sd_id128_t      mach_uuid;
+    
+    if (!new_obj)
+    {
+        st_d_error("Json parse error: %s", dat);
+        return RET_NO;
+    }
+
+    json_fetch_and_copy(new_obj, "username", username, sizeof(username));
+    userid = json_object_get_int(json_object_object_get(new_obj,"userid"));
+
+    // USR->DAEMON
+    if (p_head->direct == 1) 
+    {
+        p_acct_item = ss_find_acct_item(&srvopt, username, userid);
+        if (!p_acct_item)
+        {
+            st_d_print("Account %s:%lu not exist!", username, userid);
+            return RET_NO;
+        }
+
+        json_fetch_and_copy(new_obj, "r_mach_uuid", uuid_s, sizeof(uuid_s));
+        sd_id128_from_string(uuid_s, &mach_uuid);
+
+        if (p_activ_item = ss_uuid_search(&srvopt.uuid_tree, mach_uuid))
+        {
+            st_d_print("%s", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
+        }
+
+        // 查找到了ACTIV_ITEM，进行实际的传输关联
+    }
+    // DAEMON->USR
+    else if (p_head->direct == 2) 
+    {
+        p_acct_item = ss_find_acct_item(&srvopt, username, userid);
+        if (p_acct_item || ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid)) 
+        {
+            st_d_print("ITEM %s:%lu Already exist!", username, userid);
+            return RET_NO;
+        }
+
+
+        p_acct_item = (P_ACCT_ITEM)malloc(sizeof(ACCT_ITEM));
+        if (!p_acct_item)
+        {
+            st_d_print("Malloc faile!");
+            return RET_NO;
+        }
+
+        strncpy(p_acct_item->username, username, sizeof(p_acct_item->username));
+        p_acct_item->userid = userid;
+        slist_init(&p_acct_item->items);
+
+        p_activ_item = (P_ACTIV_ITEM)malloc(sizeof(ACTIV_ITEM));
+        if (!p_activ_item)
+        {
+            st_d_print("Malloc faile!");
+            return RET_NO;
+        }
+
+        p_activ_item->base = base;
+        p_activ_item->mach_uuid = p_head->mach_uuid;
+        p_activ_item->bev_daemon = NULL;
+        p_activ_item->bev_usr = NULL;
+
+        slist_add(&p_acct_item->list, &srvopt.acct_items);
+        slist_add(&p_activ_item->list, &p_acct_item->items);
+        ss_uuid_insert(&srvopt.uuid_tree, p_activ_item);
+
+#if 0
+        p_acct_item = NULL;
+        p_activ_item = NULL;
+        if (p_acct_item = ss_find_acct_item(&srvopt, username, userid)) 
+        {
+            st_d_print("%s:%lu", p_acct_item->username, p_acct_item->userid); 
+        }
+        if (p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid))
+        {
+            st_d_print("%s", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
+        }
+#endif
+    }
+}

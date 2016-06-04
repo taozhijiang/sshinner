@@ -19,10 +19,13 @@
  * This program aim on the server side of libevent
  */
 
+
+SRV_OPT srvopt;
+struct  event_base *base;
+
 int main(int argc, char* argv[])
 {
-    struct  event_base *base;
-    SRV_OPT srvopt;
+    memset(&srvopt, 0, sizeof(SRV_OPT));
 
     if(load_settings_server(&srvopt) == RET_NO)
     {
@@ -31,6 +34,7 @@ int main(int argc, char* argv[])
     }
 
     dump_srv_opts(&srvopt);
+    srvopt.uuid_tree = RB_ROOT;
 
     /*带配置产生event_base对象*/
     struct event_config *cfg;
