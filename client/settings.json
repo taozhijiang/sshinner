@@ -11,7 +11,8 @@
         "r_mach_uuid": "f8421165626e3f61d630656c5647286a", //User
         "portmaps": [
         {"usrport":8801, "daemonport":22 }, 
-        {"usrport":8802, "daemonport":25 }
+        {"usrport":8802, "daemonport":25 },
+        {"usrport":8803, "daemonport":3306 }
         ]
     },
 }

@@ -98,15 +98,16 @@ int main(int argc, char* argv[])
         st_d_print("Connected to server OK!");
     }
 
-
+    char buff[4096];
+    P_PKG_HEAD p_head = NULL;
     if (cltopt.C_TYPE == C_DAEMON) 
     {
-        PKG_HEAD head;
-        memset(&head, 0, HEAD_LEN);
+        memset(buff, 0, sizeof(buff));
+        p_head = GET_PKG_HEAD(buff);
 
-        head.type = 'C';
-        head.direct = DAEMON_USR; 
-        head.mach_uuid = cltopt.mach_uuid;
+        p_head->type = 'C';
+        p_head->direct = DAEMON_USR; 
+        p_head->mach_uuid = cltopt.mach_uuid;
         
         /*发送DAEMON的配置信息*/
         json_object* ajgResponse =  json_object_new_object(); 
@@ -118,11 +119,11 @@ int main(int argc, char* argv[])
                                json_object_new_int64(cltopt.userid)); 
 
         const char* ret_str = json_object_to_json_string (ajgResponse);
-        head.dat_len = strlen(ret_str) + 1;
-        head.crc = crc32(0L, ret_str, strlen(ret_str) + 1);
+        p_head->dat_len = strlen(ret_str) + 1;
+        p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
 
-        write(srv_fd, &head, HEAD_LEN);
-        write(srv_fd, ret_str, head.dat_len);
+        strcpy(GET_PKG_BODY(buff), ret_str);
+        write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
 
         PKG_HEAD ret_head;
         read(srv_fd, &ret_head, HEAD_LEN); 
@@ -140,11 +141,12 @@ int main(int argc, char* argv[])
     else
     {
         
-        PKG_HEAD head;
-        memset(&head, 0, HEAD_LEN);
-        head.type = 'C';
-        head.direct = USR_DAEMON; 
-        head.mach_uuid = cltopt.mach_uuid;
+        memset(buff, 0, sizeof(buff));
+        p_head = GET_PKG_HEAD(buff);
+
+        p_head->type = 'C';
+        p_head->direct = USR_DAEMON; 
+        p_head->mach_uuid = cltopt.mach_uuid;
         
         /*发送DAEMON的配置信息*/
         json_object* ajgResponse =  json_object_new_object(); 
@@ -158,11 +160,11 @@ int main(int argc, char* argv[])
                                json_object_new_string(SD_ID128_CONST_STR(cltopt.session_uuid))); 
 
         const char* ret_str = json_object_to_json_string (ajgResponse);
-        head.dat_len = strlen(ret_str) + 1;
-        head.crc = crc32(0L, ret_str, strlen(ret_str) + 1);
+        p_head->dat_len = strlen(ret_str) + 1;
+        p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
 
-        write(srv_fd, &head, HEAD_LEN); 
-        write(srv_fd, ret_str, head.dat_len);
+        strcpy(GET_PKG_BODY(buff), ret_str);
+        write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
 
         PKG_HEAD ret_head;
         read(srv_fd, &ret_head, HEAD_LEN);
@@ -177,7 +179,6 @@ int main(int argc, char* argv[])
 
         json_object_put(ajgResponse);
     }
-
 
 
     /**
@@ -232,7 +233,5 @@ int main(int argc, char* argv[])
     st_d_print("Program terminated!");
     return 0;
 }
-
-
 
 

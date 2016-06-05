@@ -33,6 +33,8 @@ typedef struct _activ_item {
     sd_id128_t         mach_uuid;   // DEAMON机器的会话ID
     struct bufferevent *bev_daemon;
     struct bufferevent *bev_usr;
+    unsigned int        daemon_ttl; // 看门狗，存活的时间　５次
+    unsigned int        usr_ttl;    // 看门狗
 } ACTIV_ITEM, *P_ACTIV_ITEM;
 
 typedef struct _acct_item {
@@ -78,5 +80,14 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
 static RET_T ss_handle_dat(struct bufferevent *bev,
                            P_PKG_HEAD p_head, void* dat);
 
+/* 简易从服务器发送控制信息 */
+static void ss_ret_cmd_ok(struct bufferevent *bev,
+                          sd_id128_t uuid, enum DIREC direct);
+static void ss_ret_cmd_err(struct bufferevent *bev,
+                           sd_id128_t uuid, enum DIREC direct);
+static void ss_ret_dat_err(struct bufferevent *bev,
+                           sd_id128_t uuid, enum DIREC direct);
+static void ss_ret_cmd_keep(struct bufferevent *bev,
+                            sd_id128_t uuid, enum DIREC direct);
 
 #endif

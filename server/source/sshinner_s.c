@@ -168,41 +168,51 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
         return;
     }
 
-    char *dat = malloc(head.dat_len);
-    if (!dat)
+    char *dat = NULL;
+    if (head.dat_len > 0) 
     {
-        st_d_error("Allocating %d error!", head.dat_len); 
-        return;
-    }
-    
-    memset(dat, 0, head.dat_len);
-    size_t offset = 0;
-    while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
-    {
-        if (n < (head.dat_len-offset)) 
+        dat = malloc(head.dat_len); 
+        if (!dat)
         {
-            offset += n;
-            continue;
+            st_d_error("Allocating %d error!", head.dat_len); 
+            return;
         }
-        else
-        break;
-    }
+        
+        memset(dat, 0, head.dat_len);
+        size_t offset = 0;
+        while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
+        {
+            if (n < (head.dat_len-offset)) 
+            {
+                offset += n;
+                continue;
+            }
+            else
+            break;
+        }
 
-    ulong crc = crc32(0L, dat, head.dat_len);
-    if (crc != head.crc) 
-    {
-        st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
-        st_d_print("%s", (char*) dat);
-        return;
+        ulong crc = crc32(0L, dat, head.dat_len);
+        if (crc != head.crc) 
+        {
+            st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
+            st_d_print("%s", (char*) dat);
+            return;
+        }
     }
 
     if (head.type == 'C') 
     {
         ret = ss_handle_ctl(bev, &head, (char *)dat);
+        if (ret == RET_NO)
+            ss_ret_cmd_err(bev, head.mach_uuid, 
+                           head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
     }
     else if (head.type == 'D')
     {
         ret = ss_handle_dat(bev, &head, dat);
+        if (ret == RET_NO)
+            ss_ret_dat_err(bev, head.mach_uuid, 
+                           head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
     }
     else
     {
@@ -251,7 +261,7 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
         if (sd_id128_from_string(uuid_s, &mach_uuid) != 0)
         {
             st_d_error("Convert %s failed!", uuid_s);
-            return;
+            return RET_NO;
         }
         p_activ_item = ss_uuid_search(&srvopt.uuid_tree, mach_uuid);
 
@@ -265,40 +275,39 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
         p_activ_item->bev_usr = bev;
             
         //　回复USR OK
-        PKG_HEAD ret_head;
-        memset(&ret_head, 0, HEAD_LEN);
-        ret_head.type = 'C';
-        ret_head.mach_uuid = p_activ_item->mach_uuid;
-        ret_head.ext = 'O';
-        ret_head.direct = DAEMON_USR; 
-
-        bufferevent_write(bev, &ret_head, HEAD_LEN);
+        ss_ret_cmd_ok(bev, p_activ_item->mach_uuid, DAEMON_USR);
 
         st_d_print("Connection created for %s", SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
 
         // 查找到了ACTIV_ITEM，进行实际的传输关联
+
+        return RET_YES;
     }
     // DAEMON->USR
     else if (p_head->direct == DAEMON_USR) 
     {
         p_acct_item = ss_find_acct_item(&srvopt, username, userid);
-        if (p_acct_item || ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid)) 
+        if (!p_acct_item)
+        {
+            st_d_print("%s:%d 未存在，创建之...", username, userid);
+
+            p_acct_item = (P_ACCT_ITEM)malloc(sizeof(ACCT_ITEM));
+            if (!p_acct_item)
+            {
+                st_d_print("Malloc faile!");
+                return RET_NO;
+            }
+
+            strncpy(p_acct_item->username, username, sizeof(p_acct_item->username));
+            p_acct_item->userid = userid;
+            slist_init(&p_acct_item->items);
+        }
+
+        if (ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid))
         {
             st_d_print("ITEM %s:%lu Already exist!", username, userid);
             return RET_NO;
         }
-
-
-        p_acct_item = (P_ACCT_ITEM)malloc(sizeof(ACCT_ITEM));
-        if (!p_acct_item)
-        {
-            st_d_print("Malloc faile!");
-            return RET_NO;
-        }
-
-        strncpy(p_acct_item->username, username, sizeof(p_acct_item->username));
-        p_acct_item->userid = userid;
-        slist_init(&p_acct_item->items);
 
         p_activ_item = (P_ACTIV_ITEM)malloc(sizeof(ACTIV_ITEM));
         if (!p_activ_item)
@@ -329,16 +338,9 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
 #endif
 
         //　回复DAEMON OK
-                //　回复USR OK
-        PKG_HEAD ret_head;
-        memset(&ret_head, 0, HEAD_LEN);
-        ret_head.type = 'C';
-        ret_head.mach_uuid = p_activ_item->mach_uuid;
-        ret_head.ext = 'O';
-        ret_head.direct = USR_DAEMON; 
+        ss_ret_cmd_ok(bev, p_activ_item->mach_uuid, USR_DAEMON);
 
-        bufferevent_write(bev, &ret_head, HEAD_LEN);
-
+        return RET_YES;
     }
 }
 
@@ -352,7 +354,8 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
     p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid);
     if (!p_activ_item)
     {
-        SYS_ABORT("%s NOT FOUND!", SD_ID128_CONST_STR(p_head->mach_uuid));
+        st_d_error("%s NOT FOUND!", SD_ID128_CONST_STR(p_head->mach_uuid));
+        return RET_NO;
     }
 
      // USR->DAEMON
@@ -361,23 +364,90 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
         if (bev != p_activ_item->bev_usr ||
             !p_activ_item->bev_daemon) 
         {
-            SYS_ABORT("BEV CHECK ERROR!");
+            st_d_error("BEV CHECK ERROR!");
+            return RET_NO;
         }
 
         bufferevent_write(p_activ_item->bev_daemon, p_head, HEAD_LEN);
         bufferevent_write(p_activ_item->bev_daemon, dat, p_head->dat_len); 
+
+        st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", (HEAD_LEN + p_head->dat_len)); 
     }
     else if (p_head->direct == DAEMON_USR) 
     {
         if (bev != p_activ_item->bev_daemon ||
             !p_activ_item->bev_usr) 
         {
-            SYS_ABORT("BEV CHECK ERROR!");
+            st_d_error("BEV CHECK ERROR!");
+            return RET_NO;
         }
 
         bufferevent_write(p_activ_item->bev_usr, p_head, HEAD_LEN);
         bufferevent_write(p_activ_item->bev_usr, dat, p_head->dat_len); 
+
+        st_d_print("TRANSFORM FROM DAEMON->USR %d bytes", (HEAD_LEN + p_head->dat_len)); 
     }
 
     return RET_YES;
+}
+
+static void ss_ret_cmd_ok(struct bufferevent *bev,
+                          sd_id128_t uuid, enum DIREC direct)
+{
+    PKG_HEAD ret_head;
+    memset(&ret_head, 0, HEAD_LEN);
+    ret_head.type = 'C';
+    ret_head.mach_uuid = uuid;
+    ret_head.ext = 'O';
+    ret_head.direct = direct; 
+
+    bufferevent_write(bev, &ret_head, HEAD_LEN);
+
+    return;
+}
+
+static void ss_ret_cmd_err(struct bufferevent *bev,
+                           sd_id128_t uuid, enum DIREC direct)
+{
+    PKG_HEAD ret_head;
+    memset(&ret_head, 0, HEAD_LEN);
+    ret_head.type = 'C';
+    ret_head.mach_uuid = uuid;
+    ret_head.ext = 'E';
+    ret_head.direct = direct; 
+
+    bufferevent_write(bev, &ret_head, HEAD_LEN);
+
+    return;
+}
+
+static void ss_ret_dat_err(struct bufferevent *bev,
+                           sd_id128_t uuid, enum DIREC direct)
+{
+    PKG_HEAD ret_head;
+    memset(&ret_head, 0, HEAD_LEN);
+    ret_head.type = 'C';
+    ret_head.mach_uuid = uuid;
+    ret_head.ext = 'F';
+    ret_head.direct = direct; 
+
+    bufferevent_write(bev, &ret_head, HEAD_LEN);
+
+    return;
+}
+
+static void ss_ret_cmd_keep(struct bufferevent *bev,
+                            sd_id128_t uuid, enum DIREC direct)
+{
+    PKG_HEAD ret_head;
+    memset(&ret_head, 0, HEAD_LEN);
+    ret_head.type = 'C';
+    ret_head.mach_uuid = uuid;
+    ret_head.ext = 'K';
+    ret_head.direct = direct; 
+
+    bufferevent_write(bev, &ret_head, HEAD_LEN);
+
+    return;
+
 }
