@@ -38,7 +38,7 @@ typedef struct _activ_item {
 } ACTIV_ITEM, *P_ACTIV_ITEM;
 
 typedef struct _acct_item {
-    char username   [128];  //A
+    char username   [128];  //
     unsigned long   userid;
     SLIST_HEAD      list;   //自身链表
     SLIST_HEAD      items;  //activ链表头
@@ -72,22 +72,25 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
  * 数据转发和处理类函数
  */
 void bufferread_cb(struct bufferevent *bev, void *ptr);
-static RET_T ss_new_connect_from_daemon(P_PKG_HEAD p_head, char* dat);
-static RET_T ss_new_connect_from_usr(P_PKG_HEAD p_head, char* dat);
-
 static RET_T ss_handle_ctl(struct bufferevent *bev, 
                            P_PKG_HEAD p_head, char* dat);
 static RET_T ss_handle_dat(struct bufferevent *bev,
-                           P_PKG_HEAD p_head, void* dat);
+                           P_PKG_HEAD p_head);
 
 /* 简易从服务器发送控制信息 */
-static void ss_ret_cmd_ok(struct bufferevent *bev,
+extern void ss_ret_cmd_ok(struct bufferevent *bev,
                           sd_id128_t uuid, enum DIREC direct);
-static void ss_ret_cmd_err(struct bufferevent *bev,
+extern void ss_ret_cmd_err(struct bufferevent *bev,
                            sd_id128_t uuid, enum DIREC direct);
-static void ss_ret_dat_err(struct bufferevent *bev,
+extern void ss_ret_dat_err(struct bufferevent *bev,
                            sd_id128_t uuid, enum DIREC direct);
-static void ss_ret_cmd_keep(struct bufferevent *bev,
+extern void ss_ret_cmd_keep(struct bufferevent *bev,
                             sd_id128_t uuid, enum DIREC direct);
+extern void ss_ret_fatal(struct bufferevent *bev,
+                           sd_id128_t uuid, enum DIREC direct);
+
+
+extern RET_T ss_acct_remove(P_SRV_OPT p_opt, P_ACCT_ITEM p_item);
+extern RET_T ss_activ_item_remove(P_SRV_OPT p_opt, P_ACTIV_ITEM p_item);
 
 #endif

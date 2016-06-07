@@ -10,6 +10,9 @@
 enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
 };
 
+/**
+ * 简单数据类型，可以直接赋值或者拷贝
+ */
 typedef struct _pkg_head {
      char type;                 // 'C'/'D'
      enum DIREC direct;         // 1: USR->DAEMON, 2: DAEMON->USR
@@ -20,7 +23,9 @@ typedef struct _pkg_head {
      ulong    crc;
      unsigned int   dat_len;    //实际的负载长度
  } PKG_HEAD, *P_PKG_HEAD;
+
 static const int HEAD_LEN = sizeof(PKG_HEAD);
+
 #define GET_PKG_HEAD(buf) ((P_PKG_HEAD)buf)
 #define GET_PKG_BODY(buf) ((void*)((char*)buf)+HEAD_LEN)
 

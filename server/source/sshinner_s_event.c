@@ -5,67 +5,17 @@
 #include <json-c/json.h>
 #include <json-c/json_tokener.h>
 
+#include <assert.h> 
+
 #include "sshinner_s.h"
 
-static RET_T json_fetch_and_copy(struct json_object *p_obj, const char* key, char* store, int max_len)
-{
-    json_object *p_store_obj = NULL;
-
-    if (!p_obj || !key || !strlen(key) || !store)
-        return RET_NO;
-
-    if (json_object_object_get_ex(p_obj, key, &p_store_obj) &&
-        json_object_get_string_len(p_store_obj))
-    {
-        strncpy(store, json_object_get_string(p_store_obj), max_len);
-        return RET_YES;
-    }
-
-    return RET_NO;
-}
-
-extern RET_T load_settings_server(P_SRV_OPT p_opt)
-{
-    json_object *p_obj = NULL;
-    json_object *p_class = NULL;
-    json_object *p_store_obj = NULL;
-
-    if (!p_opt)
-        return RET_NO;
-
-    if( ! (p_obj = json_object_from_file("settings.json")) )
-        return RET_NO;
-
-    if(json_object_object_get_ex(p_obj,"server",&p_class))
-    {
-        st_d_print("handling server configuration....");
-
-        if (json_object_object_get_ex(p_class,"port",&p_store_obj))
-            p_opt->port = json_object_get_int(p_store_obj); 
-
-        json_object_put(p_obj);
-        return RET_YES;
-    }
-
-    json_object_put(p_obj);
-    return RET_NO;
-}
-
-
-extern void dump_srv_opts(P_SRV_OPT p_opt)
-{
-    if (!p_opt)
-        return;
-
-    st_d_print("PORT:%d", p_opt->port);
-
-    return;
-}
-
-
+SRV_OPT srvopt;
+struct  event_base *base;
 
 void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
+    P_ACTIV_ITEM p_item = NULL;
+
     struct event_base *base = bufferevent_get_base(bev);
     int loop_terminate_flag = 0;
 
@@ -82,12 +32,57 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
-        bufferevent_free(bev);
+
+        /**
+         * 断开连接的时候拆除连接
+         */
+        if (ptr)
+        {
+            p_item = (P_ACTIV_ITEM)ptr;
+
+            if (p_item->bev_daemon == bev) 
+            {
+                st_d_print("Tearing down the daemon connection!");
+                if (p_item->bev_usr) 
+                    bufferevent_free(p_item->bev_usr); 
+                bufferevent_free(p_item->bev_daemon); 
+                p_item->bev_daemon = NULL;
+                p_item->bev_usr = NULL; 
+
+            }
+            else if (p_item->bev_usr == bev) 
+            {
+                st_d_print("Tearing down the usr connection!");
+                if (p_item->bev_daemon) 
+                    bufferevent_free(p_item->bev_daemon); 
+                bufferevent_free(p_item->bev_usr); 
+                p_item->bev_daemon = NULL;
+                p_item->bev_usr = NULL; 
+            }
+            else
+            {
+                SYS_ABORT("Error for bev args");
+            }
+
+            /**
+             * 清除这个链接
+             */
+            ss_activ_item_remove(&srvopt, p_item);
+
+            //slist_fo
+            
+        }
+        else
+        {
+            bufferevent_free(bev);
+        }
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
         st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
     } 
+
+    /*
     else if (events & BEV_EVENT_READING) 
     {
         st_d_print("GOT BEV_EVENT_READING event! ");
@@ -96,6 +91,7 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     {
         st_d_print("GOT BEV_EVENT_WRITING event! ");
     }
+    */
 
     if (loop_terminate_flag)
     {
@@ -127,7 +123,9 @@ void accept_conn_cb(struct evconnlistener *listener,
         bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
 
     /**
-     * 对于服务端，一般都是阻塞在读，而如果要写，一般在read_cb中写回就可以了
+     * 对于服务端，一般都是阻塞在读，而如果要写，一般在read_cb中写回就可以了 
+     *  
+     * 当建立连接之后，设置对应的cbargs 
      */
     bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, NULL);
     bufferevent_enable(bev, EV_READ|EV_WRITE);
@@ -144,14 +142,16 @@ void accept_error_cb(struct evconnlistener *listener, void *ctx)
 
     st_d_error( "Got an error %d (%s) on the listener. "
                 "Shutting down...\n", err, evutil_socket_error_to_string(err));
-    event_base_loopexit(base, NULL);
-
+    // event_base_loopexit(base, NULL);
     return;
 }
 
 
 /**
  * 读取事件，主要进行数据转发 
+ *  
+ * 这里命令字段和数据字段分开处理，命令是自己解析，而数据需要转发，需要 
+ * 为数据流程进行优化 
  */
 void bufferread_cb(struct bufferevent *bev, void *ptr)
 {
@@ -168,48 +168,48 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
         return;
     }
 
-    char *dat = NULL;
-    if (head.dat_len > 0) 
-    {
-        dat = malloc(head.dat_len); 
-        if (!dat)
-        {
-            st_d_error("Allocating %d error!", head.dat_len); 
-            return;
-        }
-        
-        memset(dat, 0, head.dat_len);
-        size_t offset = 0;
-        while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
-        {
-            if (n < (head.dat_len-offset)) 
-            {
-                offset += n;
-                continue;
-            }
-            else
-            break;
-        }
-
-        ulong crc = crc32(0L, dat, head.dat_len);
-        if (crc != head.crc) 
-        {
-            st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
-            st_d_print("%s", (char*) dat);
-            return;
-        }
-    }
-
     if (head.type == 'C') 
     {
+        void *dat = NULL;
+        if (head.dat_len > 0) 
+        {       
+            if (!(dat = malloc(head.dat_len)) )
+            {
+                st_d_error("Allocating %d error!", head.dat_len); 
+                return;
+            }
+            
+            memset(dat, 0, head.dat_len);
+            size_t offset = 0;
+            while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
+            {
+                if (n < (head.dat_len-offset)) 
+                {
+                    offset += n;
+                    continue;
+                }
+                else
+                break;
+            }
+
+            ulong crc = crc32(0L, dat, head.dat_len);
+            if (crc != head.crc) 
+            {
+                st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
+                st_d_print("%s", (char*) dat);
+                free(dat);
+                return;
+            }
+        }
         ret = ss_handle_ctl(bev, &head, (char *)dat);
         if (ret == RET_NO)
             ss_ret_cmd_err(bev, head.mach_uuid, 
                            head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
+        free(dat);
     }
     else if (head.type == 'D')
     {
-        ret = ss_handle_dat(bev, &head, dat);
+        ret = ss_handle_dat(bev, &head);
         if (ret == RET_NO)
             ss_ret_dat_err(bev, head.mach_uuid, 
                            head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
@@ -222,8 +222,6 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
     return;
 }
 
-extern SRV_OPT srvopt;
-extern struct  event_base *base;
 
 static RET_T ss_handle_ctl(struct bufferevent *bev, 
                            P_PKG_HEAD p_head, char* dat)
@@ -280,6 +278,8 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
         st_d_print("Connection created for %s", SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
 
         // 查找到了ACTIV_ITEM，进行实际的传输关联
+        st_d_print("Settings bev callback args!");
+        bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, p_activ_item); 
 
         return RET_YES;
     }
@@ -340,15 +340,21 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
         //　回复DAEMON OK
         ss_ret_cmd_ok(bev, p_activ_item->mach_uuid, USR_DAEMON);
 
+        st_d_print("Settings bev callback args!");
+        bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, p_activ_item); 
+
         return RET_YES;
     }
 }
 
+extern SRV_OPT srvopt;
+extern struct  event_base *base;
 
 static RET_T ss_handle_dat(struct bufferevent *bev,
-                           P_PKG_HEAD p_head, void* dat)
+                           P_PKG_HEAD p_head)
 {
-
+    char h_buff[8196];
+    size_t n = 0;
     P_ACTIV_ITEM p_activ_item = NULL;
 
     p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid);
@@ -357,6 +363,9 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
         st_d_error("%s NOT FOUND!", SD_ID128_CONST_STR(p_head->mach_uuid));
         return RET_NO;
     }
+
+    memset(h_buff, 0, sizeof(h_buff));
+    memcpy(h_buff, p_head, HEAD_LEN);
 
      // USR->DAEMON
     if (p_head->direct == USR_DAEMON) 
@@ -368,10 +377,18 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
             return RET_NO;
         }
 
-        bufferevent_write(p_activ_item->bev_daemon, p_head, HEAD_LEN);
-        bufferevent_write(p_activ_item->bev_daemon, dat, p_head->dat_len); 
+        if(bufferevent_read(bev, GET_PKG_BODY(h_buff), p_head->dat_len) == p_head->dat_len)
+        {
+            bufferevent_write(p_activ_item->bev_daemon, 
+                                h_buff, HEAD_LEN + p_head->dat_len);
+            st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", p_head->dat_len); 
+        }
+        else
+        {
+            st_d_error("Fetch msg body error from usr!");
+            return RET_NO;
+        }
 
-        st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", (HEAD_LEN + p_head->dat_len)); 
     }
     else if (p_head->direct == DAEMON_USR) 
     {
@@ -382,72 +399,19 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
             return RET_NO;
         }
 
-        bufferevent_write(p_activ_item->bev_usr, p_head, HEAD_LEN);
-        bufferevent_write(p_activ_item->bev_usr, dat, p_head->dat_len); 
-
-        st_d_print("TRANSFORM FROM DAEMON->USR %d bytes", (HEAD_LEN + p_head->dat_len)); 
+        if(bufferevent_read(bev, GET_PKG_BODY(h_buff), p_head->dat_len) == p_head->dat_len)
+        {
+            bufferevent_write(p_activ_item->bev_usr, 
+                                h_buff, HEAD_LEN + p_head->dat_len);
+            st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", p_head->dat_len); 
+        }
+        else
+        {
+            st_d_error("Fetch msg body error from daemon!");
+            return RET_NO;
+        }
     }
 
     return RET_YES;
 }
 
-static void ss_ret_cmd_ok(struct bufferevent *bev,
-                          sd_id128_t uuid, enum DIREC direct)
-{
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
-    ret_head.mach_uuid = uuid;
-    ret_head.ext = 'O';
-    ret_head.direct = direct; 
-
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
-
-    return;
-}
-
-static void ss_ret_cmd_err(struct bufferevent *bev,
-                           sd_id128_t uuid, enum DIREC direct)
-{
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
-    ret_head.mach_uuid = uuid;
-    ret_head.ext = 'E';
-    ret_head.direct = direct; 
-
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
-
-    return;
-}
-
-static void ss_ret_dat_err(struct bufferevent *bev,
-                           sd_id128_t uuid, enum DIREC direct)
-{
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
-    ret_head.mach_uuid = uuid;
-    ret_head.ext = 'F';
-    ret_head.direct = direct; 
-
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
-
-    return;
-}
-
-static void ss_ret_cmd_keep(struct bufferevent *bev,
-                            sd_id128_t uuid, enum DIREC direct)
-{
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
-    ret_head.mach_uuid = uuid;
-    ret_head.ext = 'K';
-    ret_head.direct = direct; 
-
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
-
-    return;
-
-}
