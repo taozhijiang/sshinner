@@ -44,7 +44,10 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             {
                 st_d_print("Tearing down the daemon connection!");
                 if (p_item->bev_usr) 
+                {
+                    st_d_print("Closing the usr side!");
                     bufferevent_free(p_item->bev_usr); 
+                }
                 bufferevent_free(p_item->bev_daemon); 
                 p_item->bev_daemon = NULL;
                 p_item->bev_usr = NULL; 
@@ -54,7 +57,10 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             {
                 st_d_print("Tearing down the usr connection!");
                 if (p_item->bev_daemon) 
+                {
                     bufferevent_free(p_item->bev_daemon); 
+                    st_d_print("Closing the daemon side!");
+                }
                 bufferevent_free(p_item->bev_usr); 
                 p_item->bev_daemon = NULL;
                 p_item->bev_usr = NULL; 
@@ -353,7 +359,7 @@ extern struct  event_base *base;
 static RET_T ss_handle_dat(struct bufferevent *bev,
                            P_PKG_HEAD p_head)
 {
-    char h_buff[8196];
+    char h_buff[4096];
     size_t n = 0;
     P_ACTIV_ITEM p_activ_item = NULL;
 

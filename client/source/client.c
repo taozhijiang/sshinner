@@ -81,105 +81,23 @@ int main(int argc, char* argv[])
     /*连接服务器*/
     int srv_fd;
     srv_fd = socket(AF_INET, SOCK_STREAM, 0);
-    int reuseaddr_on = 1;
-    if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
-		sizeof(reuseaddr_on)) == -1)
+    if (sc_connect_srv(srv_fd) != RET_YES)
     {
-        st_d_print("Reuse socket opt faile!\n");
-        exit(EXIT_FAILURE);
-    }
-    if (connect(srv_fd, (struct sockaddr *)&cltopt.srv, sizeof(cltopt.srv))) 
-    {
-        st_d_error("Connect to server failed!\n");
-        exit(EXIT_FAILURE);
-    }
-    else
-    {
-        st_d_print("Connected to server OK!");
+        SYS_ABORT("Connect to server failed!");
     }
 
-    char buff[4096];
-    P_PKG_HEAD p_head = NULL;
     if (cltopt.C_TYPE == C_DAEMON) 
     {
-        memset(buff, 0, sizeof(buff));
-        p_head = GET_PKG_HEAD(buff);
-
-        p_head->type = 'C';
-        p_head->direct = DAEMON_USR; 
-        p_head->mach_uuid = cltopt.mach_uuid;
-        
-        /*发送DAEMON的配置信息*/
-        json_object* ajgResponse =  json_object_new_object(); 
-        json_object_object_add (ajgResponse, "hostname", 
-                               json_object_new_string(cltopt.hostname));
-        json_object_object_add (ajgResponse, "username", 
-                               json_object_new_string(cltopt.username));
-        json_object_object_add (ajgResponse, "userid", 
-                               json_object_new_int64(cltopt.userid)); 
-
-        const char* ret_str = json_object_to_json_string (ajgResponse);
-        p_head->dat_len = strlen(ret_str) + 1;
-        p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
-
-        strcpy(GET_PKG_BODY(buff), ret_str);
-        write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
-
-        PKG_HEAD ret_head;
-        read(srv_fd, &ret_head, HEAD_LEN); 
-        if (ret_head.type == 'C' && ret_head.direct == USR_DAEMON && ret_head.ext == 'O') 
-        {
-            st_d_print("Server Response OK!");
-        }
-        else
-        {
-            SYS_ABORT("Server Response Fail!");
-        }
-
-        json_object_put(ajgResponse);
+        if(sc_daemon_connect_srv(srv_fd) != RET_YES)
+            SYS_ABORT("(Daemon)Server Response failed!");
     }
     else
     {
-        
-        memset(buff, 0, sizeof(buff));
-        p_head = GET_PKG_HEAD(buff);
-
-        p_head->type = 'C';
-        p_head->direct = USR_DAEMON; 
-        p_head->mach_uuid = cltopt.mach_uuid;
-        
-        /*发送DAEMON的配置信息*/
-        json_object* ajgResponse =  json_object_new_object(); 
-        json_object_object_add (ajgResponse, "hostname", 
-                               json_object_new_string(cltopt.hostname));
-        json_object_object_add (ajgResponse, "username", 
-                               json_object_new_string(cltopt.username));
-        json_object_object_add (ajgResponse, "userid", 
-                               json_object_new_int64(cltopt.userid)); 
-        json_object_object_add (ajgResponse, "r_mach_uuid", 
-                               json_object_new_string(SD_ID128_CONST_STR(cltopt.session_uuid))); 
-
-        const char* ret_str = json_object_to_json_string (ajgResponse);
-        p_head->dat_len = strlen(ret_str) + 1;
-        p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
-
-        strcpy(GET_PKG_BODY(buff), ret_str);
-        write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
-
-        PKG_HEAD ret_head;
-        read(srv_fd, &ret_head, HEAD_LEN);
-        if (ret_head.type == 'C' && ret_head.direct == DAEMON_USR && ret_head.ext == 'O') 
-        {
-            st_d_print("Server Response OK!");
-        }
-        else
-        {
-            SYS_ABORT("Server Response Fail!");
-        }
-
-        json_object_put(ajgResponse);
+        if(sc_usr_connect_srv(srv_fd) != RET_YES)
+            SYS_ABORT("(Usr)Server Response failed!");
     }
 
+    st_d_print("Client setup with server ok!");
 
     /**
      * USR 建立本地Listen侦听套接字
@@ -205,11 +123,15 @@ int main(int argc, char* argv[])
 
                 if (!listener) 
                 {
-                        st_d_error("Couldn't create listener");
-                        return -1;
+                    st_d_error("Couldn't create listener for %d:%d", 
+                               cltopt.maps[i].usrport, cltopt.maps[i].daemonport); 
+                    continue;
                 }
                 evconnlistener_set_error_cb(listener, accept_error_cb);
                 cltopt.maps[i].bev = NULL;
+
+                st_d_print("Setup listener for %d:%d OK", 
+                               cltopt.maps[i].usrport, cltopt.maps[i].daemonport); 
             }
             else
                 break;
@@ -217,12 +139,7 @@ int main(int argc, char* argv[])
     }
     
 
-    evutil_make_socket_nonblocking(srv_fd);
-    struct bufferevent *srv_bev = 
-        bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
-    bufferevent_setcb(srv_bev, srv_bufferread_cb, NULL, NULL, NULL);
-    cltopt.srv_bev = srv_bev;
-    bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
+    sc_set_eventcb_srv(srv_fd, base);
 
     /**
      * Main Loop Here

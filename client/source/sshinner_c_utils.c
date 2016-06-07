@@ -180,3 +180,124 @@ P_PORTMAP sc_find_create_portmap(unsigned short daemonport)
 
     return p_map;
 }
+
+RET_T sc_daemon_connect_srv(int srv_fd)
+{
+    char buff[4096];
+    P_PKG_HEAD p_head = NULL;
+
+    memset(buff, 0, sizeof(buff));
+    p_head = GET_PKG_HEAD(buff);
+
+    p_head->type = 'C';
+    p_head->direct = DAEMON_USR; 
+    p_head->mach_uuid = cltopt.mach_uuid;
+    
+    /*发送DAEMON的配置信息*/
+    json_object* ajgResponse =  json_object_new_object(); 
+    json_object_object_add (ajgResponse, "hostname", 
+                           json_object_new_string(cltopt.hostname));
+    json_object_object_add (ajgResponse, "username", 
+                           json_object_new_string(cltopt.username));
+    json_object_object_add (ajgResponse, "userid", 
+                           json_object_new_int64(cltopt.userid)); 
+
+    const char* ret_str = json_object_to_json_string (ajgResponse);
+    p_head->dat_len = strlen(ret_str) + 1;
+    p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
+
+    strcpy(GET_PKG_BODY(buff), ret_str);
+    write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
+
+    json_object_put(ajgResponse);
+
+    PKG_HEAD ret_head;
+    read(srv_fd, &ret_head, HEAD_LEN); 
+    if (ret_head.type == 'C' && ret_head.direct == USR_DAEMON && ret_head.ext == 'O') 
+    {
+        return RET_YES;
+    }
+    else
+    {
+        return RET_NO;
+    }
+
+}
+
+RET_T sc_usr_connect_srv(int srv_fd)
+{
+    char buff[4096];
+    P_PKG_HEAD p_head = NULL;
+
+    memset(buff, 0, sizeof(buff));
+    p_head = GET_PKG_HEAD(buff);
+
+    p_head->type = 'C';
+    p_head->direct = USR_DAEMON; 
+    p_head->mach_uuid = cltopt.mach_uuid;
+    
+    /*发送DAEMON的配置信息*/
+    json_object* ajgResponse =  json_object_new_object(); 
+    json_object_object_add (ajgResponse, "hostname", 
+                           json_object_new_string(cltopt.hostname));
+    json_object_object_add (ajgResponse, "username", 
+                           json_object_new_string(cltopt.username));
+    json_object_object_add (ajgResponse, "userid", 
+                           json_object_new_int64(cltopt.userid)); 
+    json_object_object_add (ajgResponse, "r_mach_uuid", 
+                           json_object_new_string(SD_ID128_CONST_STR(cltopt.session_uuid))); 
+
+    const char* ret_str = json_object_to_json_string (ajgResponse);
+    p_head->dat_len = strlen(ret_str) + 1;
+    p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
+
+    strcpy(GET_PKG_BODY(buff), ret_str);
+    write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
+
+    json_object_put(ajgResponse);
+
+    PKG_HEAD ret_head;
+    read(srv_fd, &ret_head, HEAD_LEN);
+    if (ret_head.type == 'C' && ret_head.direct == DAEMON_USR && ret_head.ext == 'O') 
+    {
+        return RET_YES;
+    }
+    else
+    {
+        return RET_NO;
+    }
+
+}
+
+
+RET_T sc_connect_srv(int srv_fd)
+{
+    int reuseaddr_on = 1;
+
+    if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
+		sizeof(reuseaddr_on)) == -1)
+    {
+        st_d_print("Reuse socket opt faile!\n");
+        return RET_NO;
+    }
+    if (connect(srv_fd, (struct sockaddr *)&cltopt.srv, sizeof(cltopt.srv))) 
+    {
+        st_d_error("Connect to server failed!\n");
+        return RET_NO;
+    }
+    
+    return RET_YES;
+}
+
+void sc_set_eventcb_srv(int srv_fd, struct event_base *base)
+{
+    struct bufferevent *srv_bev = NULL;
+
+    evutil_make_socket_nonblocking(srv_fd);
+    srv_bev = bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(srv_bev, srv_bufferread_cb, NULL, srv_bufferevent_cb, NULL);
+    cltopt.srv_bev = srv_bev;
+    bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
+
+    return;
+}

@@ -118,7 +118,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
                 struct event_base *base = bufferevent_get_base(bev);
                 struct bufferevent *n_bev = 
                     bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-                bufferevent_setcb(n_bev, bufferread_cb, NULL, NULL, p_map);
+                bufferevent_setcb(n_bev, bufferread_cb, NULL, bufferevent_cb, p_map);
                 p_map->bev = n_bev;
                 bufferevent_enable(n_bev, EV_READ|EV_WRITE);
 
@@ -149,11 +149,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 }
 
 
-/**
- * 客户端处理本地USR/DAEMON的请求
- */
-
-void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
+void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
     struct event_base *base = bufferevent_get_base(bev);
     int loop_terminate_flag = 0;
@@ -172,6 +168,7 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
 
+        // BEV_OPT_CLOSE_ON_FREE already closed the socket
         if (cltopt.C_TYPE == C_USR) 
         {
             st_d_print("Daemon terminated, so we exit!");
@@ -180,13 +177,49 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         else
         {
             bufferevent_free(bev); 
+
+            int i = 0;
+            for (i = 0; i < MAX_PORTMAP_NUM; i++) 
+            {
+                if (cltopt.maps[i].daemonport != 0) 
+                {
+                    st_d_print("Daemon free: %d-%d", cltopt.maps[i].daemonport, cltopt.maps[i].usrport); 
+                    cltopt.maps[i].usrport = 0;
+                    cltopt.maps[i].daemonport = 0;
+                    if (cltopt.maps[i].bev)
+                    {
+                        bufferevent_free(cltopt.maps[i].bev);
+                        cltopt.maps[i].bev = NULL;
+                    }
+                }
+            }
+
+            /*重新和服务器建立连接*/
+            int srv_fd;
+            srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+            if (sc_connect_srv(srv_fd) != RET_YES)
+            {
+                st_d_error("Connect to server failed!");
+                event_base_loopexit(base, NULL);
+            }
+
+            if(sc_daemon_connect_srv(srv_fd) != RET_YES)
+            {
+                st_d_error("(Daemon)Server Response failed!");
+                event_base_loopexit(base, NULL);
+            }
+       
+            sc_set_eventcb_srv(srv_fd, base);
+            st_d_print("Daemon Client re-setup with server ok!");
+
         }
     }
-    else if (events & BEV_EVENT_TIMEOUT) 
+    /*else if (events & BEV_EVENT_TIMEOUT) 
     {
         st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
     } 
-    /*
+    
     else if (events & BEV_EVENT_READING) 
     {
         st_d_print("GOT BEV_EVENT_READING event! ");
@@ -206,6 +239,48 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     return;
 }
 
+/**
+ * 客户端处理本地USR/DAEMON的请求
+ */
+
+void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
+{
+    struct event_base *base = bufferevent_get_base(bev);
+
+    //只有使用bufferevent_socket_connect进行的连接才会得到CONNECTED的事件
+    if (events & BEV_EVENT_CONNECTED) 
+    {
+        st_d_print("GOT BEV_EVENT_CONNECTED event! ");
+    } 
+    else if (events & BEV_EVENT_ERROR) 
+    {
+        st_d_print("GOT BEV_EVENT_ERROR event! ");
+
+        bufferevent_free(bev);
+        event_base_loopexit(base, NULL);
+    } 
+    else if (events & BEV_EVENT_EOF) 
+    {
+        st_d_print("GOT BEV_EVENT_EOF event! ");
+    }
+    else if (events & BEV_EVENT_TIMEOUT) 
+    {
+        st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
+    } 
+    /*
+    else if (events & BEV_EVENT_READING) 
+    {
+        st_d_print("GOT BEV_EVENT_READING event! ");
+    } 
+    else if (events & BEV_EVENT_WRITING) 
+    {
+        st_d_print("GOT BEV_EVENT_WRITING event! ");
+    } 
+    */ 
+
+    return;
+}
+
 
 /**
  * 客户端程序，USR/DAEMON都是从应用程序读取到数据了，然后推送到SRV进行转发到服务器 
@@ -213,7 +288,7 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 void bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     P_PORTMAP p_map = (P_PORTMAP)ptr; 
-    char h_buff[8196];  /*添加头部优化*/
+    char h_buff[4096];  /*添加头部优化*/
     P_PKG_HEAD p_head = NULL;
     size_t n = 0;
 

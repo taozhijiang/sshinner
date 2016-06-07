@@ -77,7 +77,14 @@ void bufferread_cb(struct bufferevent *bev, void *ptr);
 /**
  * 客户端与SRV的通信
  */
+RET_T sc_connect_srv(int srv_fd);
+RET_T sc_daemon_connect_srv(int srv_fd);
+RET_T sc_usr_connect_srv(int srv_fd);
+void sc_set_eventcb_srv(int srv_fd, struct event_base *base);
+
 void srv_bufferread_cb(struct bufferevent *bev, void *ptr);
+void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
+
 P_PORTMAP sc_find_portmap(unsigned short usrport);
 P_PORTMAP sc_find_create_portmap(unsigned short daemonport);
 
