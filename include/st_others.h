@@ -112,6 +112,8 @@ static inline void backtrace_info(int param)
         fprintf(stderr, "%s\n", strings[j]);
 
     free(strings);
+
+    exit(EXIT_FAILURE);
 }
 
 #define SYS_ABORT(...)  \

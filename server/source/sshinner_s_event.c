@@ -9,8 +9,6 @@
 
 #include "sshinner_s.h"
 
-SRV_OPT srvopt;
-struct  event_base *main_base;
 
 void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
@@ -33,57 +31,6 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
-
-        /**
-         * 断开连接的时候拆除连接
-         */
-        if (ptr)
-        {
-            p_item = (P_ACTIV_ITEM)ptr;
-
-            if (p_item->bev_daemon == bev) 
-            {
-                st_d_print("Tearing down from the daemon connection!");
-                if (p_item->bev_usr) 
-                {
-                    st_d_print("Closing the usr side!");
-                    bufferevent_free(p_item->bev_usr); 
-                }
-                bufferevent_free(p_item->bev_daemon); 
-                p_item->bev_daemon = NULL;
-                p_item->bev_usr = NULL; 
-
-            }
-            else if (p_item->bev_usr == bev) 
-            {
-                st_d_print("Tearing down from the usr connection!");
-                if (p_item->bev_daemon) 
-                {
-                    bufferevent_free(p_item->bev_daemon); 
-                    st_d_print("Closing the daemon side!");
-                }
-                bufferevent_free(p_item->bev_usr); 
-                p_item->bev_daemon = NULL;
-                p_item->bev_usr = NULL; 
-            }
-            else
-            {
-                SYS_ABORT("Error for bev args");
-            }
-
-            /**
-             * 清除这个链接
-             */
-            p_threadobj = ss_get_threadobj(p_item->mach_uuid);
-            ss_activ_item_remove(p_threadobj, p_item);
-
-            //slist_fo
-            
-        }
-        else
-        {
-            bufferevent_free(bev);
-        }
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
@@ -126,7 +73,7 @@ void accept_conn_cb(struct evconnlistener *listener,
     getnameinfo (address, socklen,
                hbuf, sizeof(hbuf),sbuf, sizeof(sbuf),
                NI_NUMERICHOST | NI_NUMERICSERV);
-    st_print("WELCOME NEW CONNECTION FROM (HOST=%s, PORT=%s)\n", hbuf, sbuf);
+    st_print("侦测到客户端连接请求 (HOST=%s, PORT=%s)\n", hbuf, sbuf);
 
     /* We got a new connection! Set up a bufferevent for it. */
     struct event_base *base = evconnlistener_get_base(listener);
@@ -139,7 +86,7 @@ void accept_conn_cb(struct evconnlistener *listener,
     bufferevent_setcb(bev, main_bufferread_cb, NULL, main_bufferevent_cb, NULL);
     bufferevent_enable(bev, EV_READ|EV_WRITE);
 
-    st_d_print("Allocate and attach new bufferevent for new connectino ok ...");
+    st_d_print("侦听套接字创建侦听事件OK ...");
 
     return;
 }
@@ -149,8 +96,7 @@ void accept_error_cb(struct evconnlistener *listener, void *ctx)
     struct event_base *base = evconnlistener_get_base(listener);
     int err = EVUTIL_SOCKET_ERROR();
 
-    st_d_error( "Got an error %d (%s) on the listener. "
-                "Shutting down...\n", err, evutil_socket_error_to_string(err));
+    st_d_error( "侦听套接字错误：%s", evutil_socket_error_to_string(err));
     // event_base_loopexit(base, NULL);
     return;
 }
@@ -173,7 +119,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 
     if ( evbuffer_remove(input, &head, HEAD_LEN) != HEAD_LEN)
     {
-        st_d_print("Can not read HEAD_LEN(%d), drop it!", HEAD_LEN);
+        st_d_print("读取数据包头%d错误!", HEAD_LEN);
         return;
     }
 
@@ -184,7 +130,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
         {       
             if (!(dat = malloc(head.dat_len)) )
             {
-                st_d_error("Allocating %d error!", head.dat_len); 
+                st_d_error("分配内存[%d]失败！", head.dat_len); 
                 return;
             }
             
@@ -204,8 +150,8 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
             ulong crc = crc32(0L, dat, head.dat_len);
             if (crc != head.crc) 
             {
-                st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
-                st_d_print("%s", (char*) dat);
+                st_d_error("数据包校验失败: %lu-%lu", crc, head.crc); 
+                st_d_print("=>%s", (char*) dat);
                 free(dat);
                 return;
             }
@@ -218,7 +164,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
     }
     else
     {
-        SYS_ABORT("Error type: %c(Server listen socket can not handle dat)!", head.type); 
+        SYS_ABORT("侦听套接字只能处理命令请求：%d", head.type); 
     }
 
     return;
@@ -231,6 +177,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
 {
     json_object *new_obj = json_tokener_parse(dat);
     json_object *p_store_obj = NULL;
+
     P_THREAD_OBJ    p_threadobj = NULL;
     P_ACCT_ITEM     p_acct_item = NULL;
     P_ACTIV_ITEM    p_activ_item = NULL;
@@ -255,34 +202,35 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         json_fetch_and_copy(new_obj, "r_mach_uuid", uuid_s, sizeof(uuid_s));
         if (sd_id128_from_string(uuid_s, &mach_uuid) != 0)
         {
-            st_d_error("Convert %s failed!", uuid_s);
-            return RET_NO;
+            st_d_error("UUID转换失败：%s！", uuid_s);
+            goto error_ret;
         }
 
         p_threadobj = ss_get_threadobj(mach_uuid);
 
-        p_acct_item = ss_find_acct_item(p_threadobj, username, userid);
+        p_acct_item = ss_find_acct_item(&srvopt, username, userid);
         if (!p_acct_item)
         {
-            st_d_print("Account %s:%lu not exist!", username, userid);
-            return RET_NO;
+            st_d_print("账户 %s:%lu 不存在！", username, userid);
+            goto error_ret;
         }
 
         p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, mach_uuid);
 
         if (!p_activ_item)
         {
-            st_d_print("Activ %s not exist!", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
-            return RET_NO;
+            st_d_print("会话 %s:%lu %s 不存在！", username, userid,
+                        SD_ID128_CONST_STR(mach_uuid));
+            goto error_ret;
         }
 
         bufferevent_free(bev);
 
-        P_C_ITEM p_c = (P_C_ITEM)malloc(sizeof(C_ITEM));
+        P_C_ITEM p_c = (P_C_ITEM)calloc(sizeof(C_ITEM), 1);
         if (!p_c)
         {
-            st_d_error("Allocation C_ITEM failed!");
-            return RET_NO;
+            st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
+            goto error_ret;
         }
         p_c->socket = bufferevent_getfd(bev);
         p_c->arg.ptr = p_activ_item;
@@ -290,7 +238,8 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         slist_add(&p_c->list, &p_threadobj->conn_queue);
         write(p_threadobj->notify_send_fd, "U", 1);
 
-        st_d_print("Queue usr connect to thread(%lu) ok!", p_threadobj->thread_id); 
+        st_d_print("已将%s:%lu %s加入线程[%lu]处理队列！", username, userid,
+                   SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_threadobj->thread_id); 
 
         return RET_YES;
     }
@@ -298,7 +247,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
     else if (p_head->direct == DAEMON_USR) 
     {
         p_threadobj = ss_get_threadobj(p_head->mach_uuid);
-        p_acct_item = ss_find_acct_item(p_threadobj, username, userid);
+        p_acct_item = ss_find_acct_item(&srvopt, username, userid);
         if (!p_acct_item)
         {
             st_d_print("%s:%lu 用户尚未存在，创建之...", username, userid);
@@ -306,28 +255,29 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
             p_acct_item = (P_ACCT_ITEM)malloc(sizeof(ACCT_ITEM));
             if (!p_acct_item)
             {
-                st_d_print("Malloc faile!");
-                return RET_NO;
+                st_d_print("申请内存[%d]失败！");
+                goto error_ret;
             }
 
             strncpy(p_acct_item->username, username, sizeof(p_acct_item->username));
             p_acct_item->userid = userid;
             slist_init(&p_acct_item->items);
 
-            slist_add(&p_acct_item->list, &p_threadobj->acct_items);
+            slist_add(&p_acct_item->list, &srvopt.acct_items);
         }
 
         if (ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid))
         {
-            st_d_print("SESSION ITEM %s:%lu Already exist!", username, userid);
-            return RET_NO;
+            st_d_print("会话 %s:%lu %s 已经存在！", username, userid,
+                       SD_ID128_CONST_STR(p_head->mach_uuid));
+            goto error_ret;
         }
 
-        p_activ_item = (P_ACTIV_ITEM)malloc(sizeof(ACTIV_ITEM));
+        p_activ_item = (P_ACTIV_ITEM)calloc(sizeof(ACTIV_ITEM), 1);
         if (!p_activ_item)
         {
-            st_d_print("Malloc faile!");
-            return RET_NO;
+            st_d_print("申请内存[%d]失败！", sizeof(ACTIV_ITEM));
+           goto error_ret;
         }
 
         bufferevent_free(bev);
@@ -335,11 +285,12 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         p_activ_item->base = p_threadobj->base; 
         p_activ_item->mach_uuid = p_head->mach_uuid;
 
-        P_C_ITEM p_c = (P_C_ITEM)malloc(sizeof(C_ITEM));
+        P_C_ITEM p_c = (P_C_ITEM)calloc(sizeof(C_ITEM), 1);
         if (!p_c)
         {
-            st_d_error("Allocation C_ITEM failed!");
-            return RET_NO;
+            st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
+            free(p_activ_item);
+            goto error_ret;
         }
         p_c->socket = bufferevent_getfd(bev);
         p_c->arg.ptr = p_activ_item;
@@ -366,8 +317,14 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
 #endif
 
 
-        st_d_print("Queue daemon connect to thread(%lu) ok!", p_threadobj->thread_id); 
+        st_d_print("已将%s:%lu %s加入线程[%lu]处理队列！", username, userid,
+                   SD_ID128_CONST_STR(p_activ_item->mach_uuid),p_threadobj->thread_id); 
 
         return RET_YES;
     }
+
+error_ret:
+    json_object_put(new_obj);
+
+    return RET_NO;
 }

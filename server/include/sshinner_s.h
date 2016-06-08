@@ -33,15 +33,16 @@ typedef struct _activ_item {
     sd_id128_t         mach_uuid;   // DEAMON机器的会话ID
     struct bufferevent *bev_daemon;
     struct bufferevent *bev_usr;
+    unsigned long       pkg_cnt;    // 转发的数据包计数
     unsigned int        daemon_ttl; // 看门狗，存活的时间　５次
     unsigned int        usr_ttl;    // 看门狗
 } ACTIV_ITEM, *P_ACTIV_ITEM;
 
 typedef struct _acct_item {
-    char username   [128];  //
+    char username   [128];      //
     unsigned long   userid;
-    SLIST_HEAD      list;   //自身链表
-    SLIST_HEAD      items;  //activ链表头
+    SLIST_HEAD      list;       //自身链表
+    SLIST_HEAD      items;      //activ会话链表头
 } ACCT_ITEM, *P_ACCT_ITEM;
 
 /* A connection queue. */
@@ -62,11 +63,10 @@ typedef struct _thread_obj {
     int notify_receive_fd;      /* receiving end of notify pipe */
     int notify_send_fd;         /* sending end of notify pipe */
 
-    SLIST_HEAD   acct_items;
     struct rb_root  uuid_tree;
 
     pthread_mutex_t q_lock;
-    SLIST_HEAD   conn_queue; /* queue of new connections to handle */
+    SLIST_HEAD   conn_queue;    /* queue of new connections to handle */
 } THREAD_OBJ, *P_THREAD_OBJ;
 
 typedef struct _srv_opt
@@ -74,6 +74,7 @@ typedef struct _srv_opt
     pthread_t       main_thread_id;   
     unsigned short  port;
 
+    SLIST_HEAD      acct_items;
     int             thread_num;
     P_THREAD_OBJ    thread_objs;
 }SRV_OPT, *P_SRV_OPT;
@@ -103,8 +104,8 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
  * 数据转发和处理类函数
  */
 extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads);
-void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
-void thread_bufferread_cb(struct bufferevent *bev, void *ptr);
+extern void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
+extern void thread_bufferread_cb(struct bufferevent *bev, void *ptr);
 static RET_T ss_handle_ctl(struct bufferevent *bev, 
                            P_PKG_HEAD p_head, char* dat);
 static RET_T ss_handle_dat(struct bufferevent *bev,
@@ -134,7 +135,8 @@ static inline P_THREAD_OBJ ss_get_threadobj(sd_id128_t uuid)
     return (&srvopt.thread_objs[(uuid.bytes[0] + uuid.bytes[7]) % srvopt.thread_num] ); 
 }
 
-extern RET_T ss_acct_remove(P_THREAD_OBJ p_threadobj, P_ACCT_ITEM p_item);
-extern RET_T ss_activ_item_remove(P_THREAD_OBJ p_threadobj, P_ACTIV_ITEM p_item);
+extern RET_T ss_acct_remove(P_SRV_OPT p_srvopt, P_ACCT_ITEM p_item);
+extern RET_T ss_activ_item_remove(P_SRV_OPT p_srvopt,
+                                  P_THREAD_OBJ p_threadobj, P_ACTIV_ITEM p_item);
 
 #endif

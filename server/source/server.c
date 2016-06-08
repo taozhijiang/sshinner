@@ -26,11 +26,20 @@ struct  event_base *main_base;
 
 int main(int argc, char* argv[])
 {
+
+#if 1
+    // For debug with segment fault
+    struct sigaction sa;
+    sa.sa_handler = backtrace_info;
+    sigaction(SIGSEGV, &sa, NULL);
+#endif
+
+
     memset(&srvopt, 0, sizeof(SRV_OPT));
 
     if(load_settings_server(&srvopt) == RET_NO)
     {
-        st_d_error("Loading settings.json error!");
+        st_d_error("加载settings.js配置文件出错！");
         exit(EXIT_FAILURE);
     }
 
@@ -40,9 +49,8 @@ int main(int argc, char* argv[])
     srvopt.thread_objs = (P_THREAD_OBJ)calloc(sizeof(THREAD_OBJ), srvopt.thread_num);
     if (!srvopt.thread_objs) 
     {
-        SYS_ABORT("Allocate memory for thread_objs failed!");
+        SYS_ABORT("申请THREAD_OBJ出错");
     }
-
 
     ss_create_worker_threads(srvopt.thread_num, srvopt.thread_objs);
     sleep(5);
@@ -50,12 +58,12 @@ int main(int argc, char* argv[])
     /*带配置产生event_base对象*/
     struct event_config *cfg;
     cfg = event_config_new();
-    event_config_avoid_method(cfg, "select");   //避免使用select
+    event_config_avoid_method(cfg, "select");          //避免使用select
     event_config_require_features(cfg, EV_FEATURE_ET);  //使用边沿触发类型
     main_base = event_base_new_with_config(cfg);
     event_config_free(cfg);
 
-    st_d_print("Current Using Method: %s", event_base_get_method(main_base)); // epoll
+    st_d_print("当前复用Event模式: %s", event_base_get_method(main_base)); // epoll
 
 
     /**
@@ -74,8 +82,8 @@ int main(int argc, char* argv[])
 
     if (!listener) 
     {
-            st_d_error("Couldn't create listener");
-            return -1;
+        st_d_error("创建侦听套接字出错！");
+        return -1;
     }
     evconnlistener_set_error_cb(listener, accept_error_cb);
    

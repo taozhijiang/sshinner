@@ -16,20 +16,20 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     size_t n = 0;
     PKG_HEAD head;
-    RET_T  ret;
 
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
     if ( evbuffer_remove(input, &head, HEAD_LEN) != HEAD_LEN)
     {
-        st_d_print("Can not read HEAD_LEN(%d), drop it!", HEAD_LEN);
+        st_d_print("读取数据包头%d错误!", HEAD_LEN);
         return;
     }
 
     if (!sd_id128_equal(head.mach_uuid, cltopt.session_uuid))
     {
-        SYS_ABORT("session_uuid not equal!");
+        SYS_ABORT("服务端返回UUID校验失败：%s-%s",
+                  SD_ID128_CONST_STR(head.mach_uuid), SD_ID128_CONST_STR(cltopt.session_uuid)); 
     }
 
     if (head.type == 'C') 
@@ -45,7 +45,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         void *dat = malloc(head.dat_len);
         if (!dat)
         {
-            st_d_error("Allocating %d error!", head.dat_len); 
+            st_d_error("申请内存[%d]失败！", head.dat_len); 
             return;
         }
         
@@ -65,7 +65,8 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         ulong crc = crc32(0L, dat, head.dat_len);
         if (crc != head.crc) 
         {
-            st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
+            st_d_error("数据包校验失败: %lu-%lu", crc, head.crc); 
+            st_d_print("=>%s", (char*) dat);
             free(dat);
             return;
         }
@@ -77,18 +78,22 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         {
             if (head.direct != USR_DAEMON) 
             {
-                SYS_ABORT("Package direction check error!");
+                st_d_error("数据包传向校验失败！");
+                free(dat);
+                return;
             }
 
             p_map = sc_find_create_portmap(head.daemonport); 
             if (!p_map) 
             {
-                SYS_ABORT("USR should already exist!");
+                st_d_error("DAEMON端端口映射表创建失败！");
+                free(dat);
+                return;
             }
 
             if (!p_map->bev) 
             {
-                st_d_print("Daemon create local ev!");
+                st_d_print("DAEMON端创建本地EV！");
 
                 p_map->usrport = head.usrport;
 
@@ -97,8 +102,9 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
                 if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
             		sizeof(reuseaddr_on)) == -1)
                 {
-                    st_d_print("Reuse socket opt faile!\n");
-                    exit(EXIT_FAILURE);
+                    st_d_error("Reuse socket opt faile!\n");
+                    free(dat);
+                    return;
                 }
                 struct sockaddr_in  local_srv;
                 local_srv.sin_family = AF_INET;
@@ -107,11 +113,13 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 
                 if (connect(fd, (struct sockaddr *)&local_srv, sizeof(local_srv))) 
                 {
-                    SYS_ABORT("Connect to server failed!\n"); 
+                    st_d_error("连接本地端口%d失败！", head.daemonport); 
+                    free(dat);
+                    return;
                 }
                 else
                 {
-                    st_d_print("Connected to local OK!");
+                    st_d_print("连接本地端口%d OK！", head.daemonport); 
                 }
 
                 evutil_make_socket_nonblocking(fd);
@@ -133,13 +141,15 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         {
             if (head.direct != DAEMON_USR) 
             {
-                SYS_ABORT("Package direction check error!");
+                st_d_error("数据包传向校验失败！");
+                free(dat);
+                return;
             }
 
             p_map = sc_find_portmap(head.usrport);
             if (!p_map || !p_map->bev) 
             {
-                SYS_ABORT("USR should already exist!");
+                SYS_ABORT("USR端本地端口应该存在！");
             }
 
             bufferevent_write(p_map->bev, dat, head.dat_len);
@@ -171,7 +181,7 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         // BEV_OPT_CLOSE_ON_FREE already closed the socket
         if (cltopt.C_TYPE == C_USR) 
         {
-            st_d_print("Daemon terminated, so we exit!");
+            st_d_print("DAEMON已经退出，本端挂起！");
             exit(EXIT_SUCCESS);
         }
         else
@@ -183,7 +193,7 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             {
                 if (cltopt.maps[i].daemonport != 0) 
                 {
-                    st_d_print("Daemon free: %d-%d", cltopt.maps[i].daemonport, cltopt.maps[i].usrport); 
+                    st_d_print("释放端口映射: %d-%d", cltopt.maps[i].daemonport, cltopt.maps[i].usrport); 
                     cltopt.maps[i].usrport = 0;
                     cltopt.maps[i].daemonport = 0;
                     if (cltopt.maps[i].bev)
@@ -195,23 +205,25 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             }
 
             /*重新和服务器建立连接*/
+            st_d_print("DAEMON端重连服务器！");
+
             int srv_fd;
             srv_fd = socket(AF_INET, SOCK_STREAM, 0);
 
             if (sc_connect_srv(srv_fd) != RET_YES)
             {
-                st_d_error("Connect to server failed!");
+                st_d_error("连接服务器失败！");
                 event_base_loopexit(base, NULL);
             }
 
             if(sc_daemon_connect_srv(srv_fd) != RET_YES)
             {
-                st_d_error("(Daemon)Server Response failed!");
+                st_d_error("(DAEMON)服务端返回错误！");
                 event_base_loopexit(base, NULL);
             }
        
             sc_set_eventcb_srv(srv_fd, base);
-            st_d_print("Daemon Client re-setup with server ok!");
+            st_d_print("(DAEMON)重连OK！");
 
         }
     }
@@ -362,7 +374,7 @@ void accept_conn_cb(struct evconnlistener *listener,
     bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, p_map);
     bufferevent_enable(bev, EV_READ|EV_WRITE);
 
-    st_d_print("Allocate and attach new bufferevent for new connectino...");
+    st_d_print("客户端创建BEV OK！");
 
     return;
 }

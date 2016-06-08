@@ -40,10 +40,10 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 
             if (p_item->bev_daemon == bev) 
             {
-                st_d_print("Tearing down the daemon connection!");
+                st_d_print("Daemon端断开连接！");
                 if (p_item->bev_usr) 
                 {
-                    st_d_print("Closing the usr side!");
+                    st_d_print("拆除Usr端！");
                     bufferevent_free(p_item->bev_usr); 
                 }
                 bufferevent_free(p_item->bev_daemon); 
@@ -51,13 +51,14 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
                 p_item->bev_usr = NULL; 
 
             }
+            // USR端主动断开后，Daemon端检测到断开消息后，会自动重连服务
             else if (p_item->bev_usr == bev) 
             {
-                st_d_print("Tearing down the usr connection!");
+                st_d_print("Usr端断开连接！");
                 if (p_item->bev_daemon) 
                 {
                     bufferevent_free(p_item->bev_daemon); 
-                    st_d_print("Closing the daemon side!");
+                    st_d_print("拆除Daemon端！");
                 }
                 bufferevent_free(p_item->bev_usr); 
                 p_item->bev_daemon = NULL;
@@ -65,17 +66,14 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             }
             else
             {
-                SYS_ABORT("Error for bev args");
+                SYS_ABORT("请检查BEV！！！");
             }
 
             /**
              * 清除这个链接
              */
             P_THREAD_OBJ p_threadobj = ss_get_threadobj(p_item->mach_uuid);
-            ss_activ_item_remove(p_threadobj, p_item);
-
-            //slist_fo
-            
+            ss_activ_item_remove(&srvopt, p_threadobj, p_item);
         }
         else
         {
@@ -125,7 +123,7 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
 
     if ( evbuffer_remove(input, &head, HEAD_LEN) != HEAD_LEN )
     {
-        st_d_print("Can not read HEAD_LEN(%d), drop it!", HEAD_LEN);
+        st_d_print("读取数据包头%d错误!", HEAD_LEN);
         return;
     }
 
@@ -136,7 +134,7 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
         {       
             if (!(dat = malloc(head.dat_len)) )
             {
-                st_d_error("Allocating %d error!", head.dat_len); 
+                st_d_error("分配内存[%d]失败！", head.dat_len); 
                 return;
             }
             
@@ -156,8 +154,8 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
             ulong crc = crc32(0L, dat, head.dat_len);
             if (crc != head.crc) 
             {
-                st_d_error("Recv data may broken: %lu-%lu", crc, head.crc); 
-                st_d_print("%s", (char*) dat);
+                st_d_error("数据包校验失败: %lu-%lu", crc, head.crc); 
+                st_d_print("=>%s", (char*) dat);
                 free(dat);
                 return;
             }
@@ -177,7 +175,7 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
     }
     else
     {
-        SYS_ABORT("Error type: %c!", head.type); 
+        SYS_ABORT("非法数据包类型： %c！", head.type); 
     }
 
     return;
@@ -206,6 +204,10 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
     json_fetch_and_copy(new_obj, "username", username, sizeof(username));
     userid = json_object_get_int(json_object_object_get(new_obj,"userid"));
 
+
+    /**
+     * TODO:
+     */
     // USR->DAEMON
     if (p_head->direct == USR_DAEMON) 
     {
@@ -216,7 +218,6 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
     else if (p_head->direct == DAEMON_USR) 
     {
         
-
         return RET_YES;
     }
 }
@@ -225,7 +226,7 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
 static RET_T ss_handle_dat(struct bufferevent *bev,
                            P_PKG_HEAD p_head)
 {
-    char h_buff[4096];
+    char h_buff[4096];  /*libevent底层一次也就读取这么多*/
     size_t n = 0;
     P_ACTIV_ITEM p_activ_item = NULL;
 
@@ -234,7 +235,7 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
     p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid);
     if (!p_activ_item)
     {
-        st_d_error("%s NOT FOUND!", SD_ID128_CONST_STR(p_head->mach_uuid));
+        st_d_error("会话UUID %s未找到！", SD_ID128_CONST_STR(p_head->mach_uuid));
         return RET_NO;
     }
 
@@ -247,7 +248,7 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
         if (bev != p_activ_item->bev_usr ||
             !p_activ_item->bev_daemon) 
         {
-            st_d_error("BEV CHECK ERROR!");
+            st_d_error("BEV检查出错！");
             return RET_NO;
         }
 
@@ -259,7 +260,7 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
         }
         else
         {
-            st_d_error("Fetch msg body error from usr!");
+            st_d_error("读取Usr端数据负载失败！");
             return RET_NO;
         }
 
@@ -269,7 +270,7 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
         if (bev != p_activ_item->bev_daemon ||
             !p_activ_item->bev_usr) 
         {
-            st_d_error("BEV CHECK ERROR!");
+            st_d_error("BEV检查出错！");
             return RET_NO;
         }
 
@@ -277,11 +278,11 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
         {
             bufferevent_write(p_activ_item->bev_usr, 
                                 h_buff, HEAD_LEN + p_head->dat_len);
-            st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", p_head->dat_len); 
+            st_d_print("TRANSFORM FROM DAEMON->USR %d bytes", p_head->dat_len); 
         }
         else
         {
-            st_d_error("Fetch msg body error from daemon!");
+            st_d_error("读取Daemon端数据负载失败！");
             return RET_NO;
         }
     }
@@ -325,7 +326,6 @@ extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads)
             SYS_ABORT("Can't monitor libevent notify pipe");
         }
 
-        slist_init(&threads[i].acct_items);
         slist_init(&threads[i].conn_queue);
         pthread_mutex_init(&threads[i].q_lock, NULL); 
 

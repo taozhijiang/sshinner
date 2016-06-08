@@ -52,7 +52,7 @@ int main(int argc, char* argv[])
 
     if(load_settings_client(&cltopt) == RET_NO)
     {
-        st_d_error("Loading settings.json error!");
+        st_d_error("加载配置文件settings.json出错！");
         exit(EXIT_FAILURE);
     }
 
@@ -77,28 +77,28 @@ int main(int argc, char* argv[])
     event_config_require_features(cfg, EV_FEATURE_ET);  //使用边沿触发类型
     base = event_base_new_with_config(cfg);
     event_config_free(cfg);
-    st_d_print("Current Using Method: %s", event_base_get_method(base)); // epoll
+    st_d_print("当前复用Event模式: %s", event_base_get_method(base)); // epoll
 
     /*连接服务器*/
     int srv_fd;
     srv_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (sc_connect_srv(srv_fd) != RET_YES)
     {
-        SYS_ABORT("Connect to server failed!");
+        SYS_ABORT("连接服务器失败！");
     }
 
     if (cltopt.C_TYPE == C_DAEMON) 
     {
         if(sc_daemon_connect_srv(srv_fd) != RET_YES)
-            SYS_ABORT("(Daemon)Server Response failed!");
+            SYS_ABORT("(Daemon)　服务器返回错误！");
     }
     else
     {
         if(sc_usr_connect_srv(srv_fd) != RET_YES)
-            SYS_ABORT("(Usr)Server Response failed!");
+            SYS_ABORT("(Usr)　服务器返回错误！");
     }
 
-    st_d_print("Client setup with server ok!");
+    st_d_print("客户端连接服务器OK！");
 
     /**
      * USR 建立本地Listen侦听套接字
@@ -124,14 +124,14 @@ int main(int argc, char* argv[])
 
                 if (!listener) 
                 {
-                    st_d_error("Couldn't create listener for %d:%d", 
+                    st_d_error("[USR]创建侦听套接字失败 %d:%d", 
                                cltopt.maps[i].usrport, cltopt.maps[i].daemonport); 
                     continue;
                 }
                 evconnlistener_set_error_cb(listener, accept_error_cb);
                 cltopt.maps[i].bev = NULL;
 
-                st_d_print("Setup listener for %d:%d OK", 
+                st_d_print("[USR]创建侦听套接字 %d:%d OK", 
                                cltopt.maps[i].usrport, cltopt.maps[i].daemonport); 
             }
             else
@@ -148,7 +148,7 @@ int main(int argc, char* argv[])
     event_base_loop(base, 0);
         
     event_base_free(base);
-    st_d_print("Program terminated!");
+    st_d_print("程序退出！！！！");
     return 0;
 }
 
