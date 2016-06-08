@@ -49,6 +49,7 @@ typedef struct _acct_item {
 typedef struct conn_item {
     SLIST_HEAD      list;
     int             socket;
+    enum DIREC      direct;
     union {
         unsigned long dat;
         void*         ptr;

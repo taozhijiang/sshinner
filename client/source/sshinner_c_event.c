@@ -16,6 +16,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     size_t n = 0;
     PKG_HEAD head;
+    P_PORTMAP p_map = NULL;
 
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
@@ -39,10 +40,62 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
             st_d_error("SERVER RETURNED ERROR!");
             exit(EXIT_SUCCESS);
         }
+
+        if (head.ext == 'T')
+        {
+            p_map = sc_find_daemon_portmap(head.daemonport, 1); 
+            if (!p_map) 
+            {
+                st_d_error("DAEMON端端口映射表创建失败！");
+                return;
+            }
+
+            if (!p_map->bev) 
+            {
+                st_d_print("DAEMON端创建本地EV！");
+
+                p_map->usrport = head.usrport;
+
+                int fd = socket(AF_INET, SOCK_STREAM, 0);
+                int reuseaddr_on = 1;
+                if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
+                    sizeof(reuseaddr_on)) == -1)
+                {
+                    st_d_error("Reuse socket opt faile!\n");
+                    return;
+                }
+                struct sockaddr_in  local_srv;
+                local_srv.sin_family = AF_INET;
+                local_srv.sin_addr.s_addr = inet_addr("127.0.0.1");
+                local_srv.sin_port = htons(head.daemonport);
+
+                if (connect(fd, (struct sockaddr *)&local_srv, sizeof(local_srv))) 
+                {
+                    st_d_error("连接本地端口%d失败！", head.daemonport); 
+                    return;
+                }
+                else
+                {
+                    st_d_print("连接本地端口%d OK！", head.daemonport); 
+                }
+
+                evutil_make_socket_nonblocking(fd);
+                struct event_base *base = bufferevent_get_base(bev);
+                struct bufferevent *n_bev = 
+                    bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+                bufferevent_setcb(n_bev, bufferread_cb, NULL, bufferevent_cb, p_map);
+                p_map->bev = n_bev;
+                bufferevent_enable(n_bev, EV_READ|EV_WRITE);
+
+                printf("%d, %d, %p", p_map->daemonport, p_map->usrport, p_map->bev);
+                return;
+            }
+
+        }
     }
     else
     {
-        void *dat = malloc(head.dat_len);
+        char *dat = malloc(head.dat_len);
         if (!dat)
         {
             st_d_error("申请内存[%d]失败！", head.dat_len); 
@@ -71,7 +124,6 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
             return;
         }
 
-        P_PORTMAP p_map = NULL;
 
         // 数据，根据 USR DAEMON 角色处理
         if (cltopt.C_TYPE == C_DAEMON) 
@@ -83,55 +135,14 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
                 return;
             }
 
-            p_map = sc_find_create_portmap(head.daemonport); 
+            p_map = sc_find_daemon_portmap(head.daemonport, 0); 
+            printf("%d, %d, %p", p_map->daemonport, p_map->usrport, p_map->bev);
             if (!p_map) 
             {
-                st_d_error("DAEMON端端口映射表创建失败！");
+                st_d_error("DAEMON端端口映射表查找失败！");
                 free(dat);
                 return;
             }
-
-            if (!p_map->bev) 
-            {
-                st_d_print("DAEMON端创建本地EV！");
-
-                p_map->usrport = head.usrport;
-
-                int fd = socket(AF_INET, SOCK_STREAM, 0);
-                int reuseaddr_on = 1;
-                if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
-            		sizeof(reuseaddr_on)) == -1)
-                {
-                    st_d_error("Reuse socket opt faile!\n");
-                    free(dat);
-                    return;
-                }
-                struct sockaddr_in  local_srv;
-                local_srv.sin_family = AF_INET;
-                local_srv.sin_addr.s_addr = inet_addr("127.0.0.1");
-                local_srv.sin_port = htons(head.daemonport);
-
-                if (connect(fd, (struct sockaddr *)&local_srv, sizeof(local_srv))) 
-                {
-                    st_d_error("连接本地端口%d失败！", head.daemonport); 
-                    free(dat);
-                    return;
-                }
-                else
-                {
-                    st_d_print("连接本地端口%d OK！", head.daemonport); 
-                }
-
-                evutil_make_socket_nonblocking(fd);
-                struct event_base *base = bufferevent_get_base(bev);
-                struct bufferevent *n_bev = 
-                    bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-                bufferevent_setcb(n_bev, bufferread_cb, NULL, bufferevent_cb, p_map);
-                p_map->bev = n_bev;
-                bufferevent_enable(n_bev, EV_READ|EV_WRITE);
-
-            }
-
 
             bufferevent_write(p_map->bev, dat, head.dat_len);
             free(dat);
@@ -146,7 +157,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
                 return;
             }
 
-            p_map = sc_find_portmap(head.usrport);
+            p_map = sc_find_usr_portmap(head.usrport);
             if (!p_map || !p_map->bev) 
             {
                 SYS_ABORT("USR端本地端口应该存在！");
@@ -375,6 +386,23 @@ void accept_conn_cb(struct evconnlistener *listener,
     bufferevent_enable(bev, EV_READ|EV_WRITE);
 
     st_d_print("客户端创建BEV OK！");
+
+    /**
+     * 有些服务是conn连接之后，服务端先发消息，然后客户端再进行响应的，所以 
+     * 为了避免这种情况，客户端接收到conn消息之后，需要先向DAEMON端发送一个控制 
+     * 消息，打通DAEMON端的数据传输接口 
+     */
+
+    PKG_HEAD head;
+    memset(&head, 0, HEAD_LEN);
+    head.type = 'C';
+    head.ext = 'T';     // trigger
+    head.direct = USR_DAEMON;    // USR_DAEMON
+    head.mach_uuid = cltopt.session_uuid;
+    head.daemonport = p_map->daemonport;
+    head.usrport = p_map->usrport;
+
+    bufferevent_write(cltopt.srv_bev, &head, HEAD_LEN);
 
     return;
 }

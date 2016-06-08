@@ -185,34 +185,26 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
 static RET_T ss_handle_ctl(struct bufferevent *bev, 
                            P_PKG_HEAD p_head, char* dat)
 {
-    json_object *new_obj = json_tokener_parse(dat);
-    json_object *p_store_obj = NULL;
-    P_ACCT_ITEM     p_acct_item = NULL;
-    P_ACTIV_ITEM    p_activ_item = NULL;
+    P_ACTIV_ITEM p_activ_item = NULL;
+    P_THREAD_OBJ p_threadobj = ss_get_threadobj(p_head->mach_uuid); 
 
-    char username   [128];
-    unsigned long   userid;
-    char uuid_s     [33];
-    sd_id128_t      mach_uuid;
-    
-    if (!new_obj)
+    p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid);
+    if (!p_activ_item)
     {
-        st_d_error("Json parse error: %s", dat);
+        st_d_error("会话UUID %s未找到！", SD_ID128_CONST_STR(p_head->mach_uuid));
         return RET_NO;
     }
 
-    json_fetch_and_copy(new_obj, "username", username, sizeof(username));
-    userid = json_object_get_int(json_object_object_get(new_obj,"userid"));
 
-
-    /**
-     * TODO:
-     */
     // USR->DAEMON
     if (p_head->direct == USR_DAEMON) 
     {
-   
-        return RET_YES;
+        if (p_head->ext == 'T') 
+        {
+            bufferevent_write(p_activ_item->bev_daemon, 
+                              p_head, HEAD_LEN);
+        }
+        return RET_YES; 
     }
     // DAEMON->USR
     else if (p_head->direct == DAEMON_USR) 
@@ -370,7 +362,19 @@ static void thread_process(int fd, short which, void *arg)
     {
         case 'D':
             p_list = slist_fetch(&p_threadobj->conn_queue);
+            if (!p_list)
+            {
+                st_d_error("无法从任务队列中获取任务！");
+                return;
+            }
+
             p_c_item = list_entry(p_list, C_ITEM, list);
+            if (p_c_item->direct != DAEMON_USR) 
+            {
+                SYS_ABORT("数据流向错误！！！");
+            }
+
+
             p_activ_item = (P_ACTIV_ITEM)p_c_item->arg.ptr;
 
             new_bev = 
@@ -388,7 +392,19 @@ static void thread_process(int fd, short which, void *arg)
 
         case 'U':
             p_list = slist_fetch(&p_threadobj->conn_queue);
+            if (!p_list)
+            {
+                st_d_error("无法从任务队列中获取任务！");
+                return;
+            }
+
             p_c_item = list_entry(p_list, C_ITEM, list);
+            if (p_c_item->direct != USR_DAEMON) 
+            {
+                SYS_ABORT("数据流向错误！！！");
+            }
+
+
             p_activ_item = (P_ACTIV_ITEM)p_c_item->arg.ptr;
 
 

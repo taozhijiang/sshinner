@@ -138,7 +138,7 @@ extern void dump_clt_opts(P_CLT_OPT p_opt)
 
 
 // used from USR SIDE
-P_PORTMAP sc_find_portmap(unsigned short usrport)
+P_PORTMAP sc_find_usr_portmap(unsigned short usrport)
 {
     P_PORTMAP p_map = NULL;
     int i = 0;
@@ -148,6 +148,7 @@ P_PORTMAP sc_find_portmap(unsigned short usrport)
         if (cltopt.maps[i].usrport == usrport) 
         {
             p_map = &cltopt.maps[i];
+            return p_map;
         }
     }
 
@@ -155,7 +156,7 @@ P_PORTMAP sc_find_portmap(unsigned short usrport)
 }
 
 // used from DAEMON SIDE
-P_PORTMAP sc_find_create_portmap(unsigned short daemonport)
+P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit)
 {
     P_PORTMAP p_map = NULL;
     int i = 0;
@@ -165,16 +166,21 @@ P_PORTMAP sc_find_create_portmap(unsigned short daemonport)
         if (cltopt.maps[i].daemonport == daemonport) 
         {
             p_map = &cltopt.maps[i];
+            return p_map;
         }
     }
 
-    for (i = 0; i < MAX_PORTMAP_NUM; i++) 
+    if (! createit)
+        return NULL;
+
+    for (i = 0; i < MAX_PORTMAP_NUM; i++)
     {
         if (cltopt.maps[i].daemonport == 0) 
         {
             p_map = &cltopt.maps[i];
             p_map->daemonport = daemonport;
             p_map->bev = NULL;
+            break;
         }
     }
 

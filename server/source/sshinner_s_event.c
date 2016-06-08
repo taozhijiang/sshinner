@@ -232,6 +232,8 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
             st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
             goto error_ret;
         }
+
+        p_c->direct = p_head->direct;
         p_c->socket = bufferevent_getfd(bev);
         p_c->arg.ptr = p_activ_item;
 
@@ -292,6 +294,8 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
             free(p_activ_item);
             goto error_ret;
         }
+
+        p_c->direct = p_head->direct;
         p_c->socket = bufferevent_getfd(bev);
         p_c->arg.ptr = p_activ_item;
 

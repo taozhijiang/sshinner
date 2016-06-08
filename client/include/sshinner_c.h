@@ -85,7 +85,7 @@ void sc_set_eventcb_srv(int srv_fd, struct event_base *base);
 void srv_bufferread_cb(struct bufferevent *bev, void *ptr);
 void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
-P_PORTMAP sc_find_portmap(unsigned short usrport);
-P_PORTMAP sc_find_create_portmap(unsigned short daemonport);
+P_PORTMAP sc_find_usr_portmap(unsigned short usrport);
+P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit);
 
 #endif
