@@ -4,6 +4,7 @@
 #include <errno.h>
 
 #include <sys/socket.h>
+#include <pthread.h>
 
 #include <event2/event.h>
 #include <event2/bufferevent.h>
@@ -21,7 +22,7 @@
 
 
 SRV_OPT srvopt;
-struct  event_base *base;
+struct  event_base *main_base;
 
 int main(int argc, char* argv[])
 {
@@ -34,17 +35,27 @@ int main(int argc, char* argv[])
     }
 
     dump_srv_opts(&srvopt);
-    srvopt.uuid_tree = RB_ROOT;
+
+    srvopt.main_thread_id = pthread_self(); 
+    srvopt.thread_objs = (P_THREAD_OBJ)calloc(sizeof(THREAD_OBJ), srvopt.thread_num);
+    if (!srvopt.thread_objs) 
+    {
+        SYS_ABORT("Allocate memory for thread_objs failed!");
+    }
+
+
+    ss_create_worker_threads(srvopt.thread_num, srvopt.thread_objs);
+    sleep(5);
 
     /*带配置产生event_base对象*/
     struct event_config *cfg;
     cfg = event_config_new();
     event_config_avoid_method(cfg, "select");   //避免使用select
     event_config_require_features(cfg, EV_FEATURE_ET);  //使用边沿触发类型
-    base = event_base_new_with_config(cfg);
+    main_base = event_base_new_with_config(cfg);
     event_config_free(cfg);
 
-    st_d_print("Current Using Method: %s", event_base_get_method(base)); // epoll
+    st_d_print("Current Using Method: %s", event_base_get_method(main_base)); // epoll
 
 
     /**
@@ -57,7 +68,7 @@ int main(int argc, char* argv[])
     sin.sin_addr.s_addr = htonl(0);
     sin.sin_port = htons(srvopt.port); /* Port Num */
 
-    listener = evconnlistener_new_bind(base, accept_conn_cb, NULL,
+    listener = evconnlistener_new_bind(main_base, accept_conn_cb, NULL,
             LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1/*backlog*/,
             (struct sockaddr*)&sin, sizeof(sin));
 
@@ -71,11 +82,11 @@ int main(int argc, char* argv[])
     /**
      * Main Loop Here
      */
-    event_base_loop(base, 0);
+    event_base_loop(main_base, 0);
 
 
     evconnlistener_free(listener);
-    event_base_free(base);
+    event_base_free(main_base);
 
     st_d_print("Program terminated!");
     return 0;

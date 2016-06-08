@@ -43,6 +43,11 @@ extern RET_T load_settings_server(P_SRV_OPT p_opt)
         if (json_object_object_get_ex(p_class,"port",&p_store_obj))
             p_opt->port = json_object_get_int(p_store_obj); 
 
+        if (json_object_object_get_ex(p_class,"thread_num",&p_store_obj))
+            p_opt->thread_num = json_object_get_int(p_store_obj); 
+        else
+            p_opt->thread_num = 5; /*default*/
+
         json_object_put(p_obj);
         return RET_YES;
     }

@@ -1,15 +1,15 @@
 #include "rbtree.h"
 #include "sshinner_s.h"
 
-extern P_ACCT_ITEM  ss_find_acct_item(P_SRV_OPT p_opt, 
+extern P_ACCT_ITEM  ss_find_acct_item(P_THREAD_OBJ p_threadobj, 
                                       const char* username, unsigned long userid)
 {
-    if (!p_opt || !username || slist_empty(&p_opt->acct_items)) 
+    if (!p_threadobj || !username || slist_empty(&p_threadobj->acct_items)) 
         return NULL;
 
     P_ACCT_ITEM p_acct_item = NULL;
 
-    slist_for_each_entry(p_acct_item, &p_opt->acct_items, list)
+    slist_for_each_entry(p_acct_item, &p_threadobj->acct_items, list)
     {
         if (!strncasecmp(username, p_acct_item->username, strlen(p_acct_item->username))
             && userid == p_acct_item->userid) 
@@ -80,21 +80,21 @@ extern void ss_uuid_erase(P_ACTIV_ITEM data, struct rb_root *tree)
     return rb_erase(&data->node, tree);
 }
 
-extern RET_T ss_activ_item_remove(P_SRV_OPT p_opt, P_ACTIV_ITEM p_item)
+extern RET_T ss_activ_item_remove(P_THREAD_OBJ p_threadobj, P_ACTIV_ITEM p_item)
 {
     P_ACCT_ITEM p_acct_item = NULL;
     P_ACTIV_ITEM p_activ_item = NULL;
 
-    slist_for_each_entry(p_acct_item, &p_opt->acct_items, list)
+    slist_for_each_entry(p_acct_item, &p_threadobj->acct_items, list)
     {
         slist_for_each_entry(p_activ_item, &p_acct_item->items, list)
         {
             if (p_activ_item == p_item) 
             {
-                st_d_print("Free session for %s:%d with %s", p_acct_item->username, 
+                st_d_print("Free session for %s:%lu with %s", p_acct_item->username, 
                            p_acct_item->userid, SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
                 // free this block
-                ss_uuid_erase(p_acct_item, &p_opt->uuid_tree);
+                ss_uuid_erase(p_activ_item, &p_threadobj->uuid_tree);
                 slist_remove(&p_activ_item->list, &p_acct_item->items); 
                 free(p_activ_item); 
                 goto out_1;
@@ -108,13 +108,13 @@ out_1:
     
     if (slist_empty(&p_acct_item->items)) 
     {
-        ss_acct_remove(p_opt, p_acct_item);
+        ss_acct_remove(p_threadobj, p_acct_item);
     }
 
 }
 
 
-extern RET_T ss_acct_remove(P_SRV_OPT p_opt, P_ACCT_ITEM p_item)
+extern RET_T ss_acct_remove(P_THREAD_OBJ p_threadobj, P_ACCT_ITEM p_item)
 {
     P_SLIST_HEAD p_pos = NULL;
     P_SLIST_HEAD p_n = NULL;
@@ -126,14 +126,14 @@ extern RET_T ss_acct_remove(P_SRV_OPT p_opt, P_ACCT_ITEM p_item)
         SYS_ABORT("Can not remove acct with active items!");
     }
 
-    slist_for_each_safe(p_pos, p_n/*internel use*/, &p_opt->acct_items)
+    slist_for_each_safe(p_pos, p_n/*internel use*/, &p_threadobj->acct_items)
     {
         p_acct_item = list_entry(p_pos, ACCT_ITEM, list);
         if (p_acct_item == p_item) 
         {               
             st_d_print("Free Acct for %s:%d", p_item->username, p_item->userid); 
             // free this block
-            slist_remove(&p_item->list, &p_opt->acct_items);
+            slist_remove(&p_item->list, &p_threadobj->acct_items);
             free(p_acct_item);
             break;
         }

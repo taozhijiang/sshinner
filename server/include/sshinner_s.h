@@ -44,11 +44,38 @@ typedef struct _acct_item {
     SLIST_HEAD      items;  //activ链表头
 } ACCT_ITEM, *P_ACCT_ITEM;
 
+/* A connection queue. */
+typedef struct conn_item {
+    SLIST_HEAD      list;
+    int             socket;
+    union {
+        unsigned long dat;
+        void*         ptr;
+    } arg;
+}C_ITEM, *P_C_ITEM;
+
+struct event;
+typedef struct _thread_obj {
+    pthread_t thread_id;        /* unique ID of this thread */
+    struct event_base *base;    /* libevent handle this thread uses */
+    struct event *p_notify_event;  /* listen event for notify pipe */
+    int notify_receive_fd;      /* receiving end of notify pipe */
+    int notify_send_fd;         /* sending end of notify pipe */
+
+    SLIST_HEAD   acct_items;
+    struct rb_root  uuid_tree;
+
+    pthread_mutex_t q_lock;
+    SLIST_HEAD   conn_queue; /* queue of new connections to handle */
+} THREAD_OBJ, *P_THREAD_OBJ;
+
 typedef struct _srv_opt
 {
-    unsigned short port;
-    struct rb_root uuid_tree;
-    SLIST_HEAD     acct_items;
+    pthread_t       main_thread_id;   
+    unsigned short  port;
+
+    int             thread_num;
+    P_THREAD_OBJ    thread_objs;
 }SRV_OPT, *P_SRV_OPT;
 
 
@@ -67,11 +94,17 @@ void accept_conn_cb(struct evconnlistener *listener,
 void accept_error_cb(struct evconnlistener *listener, void *ctx);
 void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
+void main_bufferread_cb(struct bufferevent *bev, void *ptr);
+void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
+static RET_T ss_main_handle_ctl(struct bufferevent *bev, 
+                           P_PKG_HEAD p_head, char* dat);
 
 /**
  * 数据转发和处理类函数
  */
-void bufferread_cb(struct bufferevent *bev, void *ptr);
+extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads);
+void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
+void thread_bufferread_cb(struct bufferevent *bev, void *ptr);
 static RET_T ss_handle_ctl(struct bufferevent *bev, 
                            P_PKG_HEAD p_head, char* dat);
 static RET_T ss_handle_dat(struct bufferevent *bev,
@@ -90,7 +123,18 @@ extern void ss_ret_fatal(struct bufferevent *bev,
                            sd_id128_t uuid, enum DIREC direct);
 
 
-extern RET_T ss_acct_remove(P_SRV_OPT p_opt, P_ACCT_ITEM p_item);
-extern RET_T ss_activ_item_remove(P_SRV_OPT p_opt, P_ACTIV_ITEM p_item);
+extern SRV_OPT srvopt;
+extern struct  event_base *main_base;
+
+/**
+ * UUID到线程池索引的映射
+ */
+static inline P_THREAD_OBJ ss_get_threadobj(sd_id128_t uuid)
+{
+    return (&srvopt.thread_objs[(uuid.bytes[0] + uuid.bytes[7]) % srvopt.thread_num] ); 
+}
+
+extern RET_T ss_acct_remove(P_THREAD_OBJ p_threadobj, P_ACCT_ITEM p_item);
+extern RET_T ss_activ_item_remove(P_THREAD_OBJ p_threadobj, P_ACTIV_ITEM p_item);
 
 #endif

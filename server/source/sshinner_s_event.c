@@ -10,11 +10,12 @@
 #include "sshinner_s.h"
 
 SRV_OPT srvopt;
-struct  event_base *base;
+struct  event_base *main_base;
 
-void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
+void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
     P_ACTIV_ITEM p_item = NULL;
+    P_THREAD_OBJ p_threadobj = NULL;
 
     struct event_base *base = bufferevent_get_base(bev);
     int loop_terminate_flag = 0;
@@ -42,7 +43,7 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 
             if (p_item->bev_daemon == bev) 
             {
-                st_d_print("Tearing down the daemon connection!");
+                st_d_print("Tearing down from the daemon connection!");
                 if (p_item->bev_usr) 
                 {
                     st_d_print("Closing the usr side!");
@@ -55,7 +56,7 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             }
             else if (p_item->bev_usr == bev) 
             {
-                st_d_print("Tearing down the usr connection!");
+                st_d_print("Tearing down from the usr connection!");
                 if (p_item->bev_daemon) 
                 {
                     bufferevent_free(p_item->bev_daemon); 
@@ -73,7 +74,8 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             /**
              * 清除这个链接
              */
-            ss_activ_item_remove(&srvopt, p_item);
+            p_threadobj = ss_get_threadobj(p_item->mach_uuid);
+            ss_activ_item_remove(p_threadobj, p_item);
 
             //slist_fo
             
@@ -110,7 +112,10 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 
 
 /**
- * 监听套接字响应事件
+ * 监听套接字响应事件 
+ *  
+ * 这里需要接受客户端的一次数据，然后决定将这个客户端分配到 
+ * 哪个线程去处理，所以这里只进行一次call_back 
  */
 void accept_conn_cb(struct evconnlistener *listener,
     evutil_socket_t fd, struct sockaddr *address, int socklen,
@@ -126,14 +131,12 @@ void accept_conn_cb(struct evconnlistener *listener,
     /* We got a new connection! Set up a bufferevent for it. */
     struct event_base *base = evconnlistener_get_base(listener);
     struct bufferevent *bev = 
-        bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+        bufferevent_socket_new(base, fd, 0 /*BEV_OPT_CLOSE_ON_FREE*/);
 
     /**
      * 对于服务端，一般都是阻塞在读，而如果要写，一般在read_cb中写回就可以了 
-     *  
-     * 当建立连接之后，设置对应的cbargs 
      */
-    bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, NULL);
+    bufferevent_setcb(bev, main_bufferread_cb, NULL, main_bufferevent_cb, NULL);
     bufferevent_enable(bev, EV_READ|EV_WRITE);
 
     st_d_print("Allocate and attach new bufferevent for new connectino ok ...");
@@ -159,7 +162,7 @@ void accept_error_cb(struct evconnlistener *listener, void *ctx)
  * 这里命令字段和数据字段分开处理，命令是自己解析，而数据需要转发，需要 
  * 为数据流程进行优化 
  */
-void bufferread_cb(struct bufferevent *bev, void *ptr)
+void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     size_t n = 0;
     PKG_HEAD head;
@@ -207,33 +210,28 @@ void bufferread_cb(struct bufferevent *bev, void *ptr)
                 return;
             }
         }
-        ret = ss_handle_ctl(bev, &head, (char *)dat);
+        ret = ss_main_handle_ctl(bev, &head, (char *)dat);
         if (ret == RET_NO)
             ss_ret_cmd_err(bev, head.mach_uuid, 
                            head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
         free(dat);
     }
-    else if (head.type == 'D')
-    {
-        ret = ss_handle_dat(bev, &head);
-        if (ret == RET_NO)
-            ss_ret_dat_err(bev, head.mach_uuid, 
-                           head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
-    }
     else
     {
-        SYS_ABORT("Error type: %c!", head.type); 
+        SYS_ABORT("Error type: %c(Server listen socket can not handle dat)!", head.type); 
     }
 
     return;
 }
 
 
-static RET_T ss_handle_ctl(struct bufferevent *bev, 
+
+static RET_T ss_main_handle_ctl(struct bufferevent *bev, 
                            P_PKG_HEAD p_head, char* dat)
 {
     json_object *new_obj = json_tokener_parse(dat);
     json_object *p_store_obj = NULL;
+    P_THREAD_OBJ    p_threadobj = NULL;
     P_ACCT_ITEM     p_acct_item = NULL;
     P_ACTIV_ITEM    p_activ_item = NULL;
 
@@ -254,20 +252,23 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
     // USR->DAEMON
     if (p_head->direct == USR_DAEMON) 
     {
-        p_acct_item = ss_find_acct_item(&srvopt, username, userid);
-        if (!p_acct_item)
-        {
-            st_d_print("Account %s:%lu not exist!", username, userid);
-            return RET_NO;
-        }
-
         json_fetch_and_copy(new_obj, "r_mach_uuid", uuid_s, sizeof(uuid_s));
         if (sd_id128_from_string(uuid_s, &mach_uuid) != 0)
         {
             st_d_error("Convert %s failed!", uuid_s);
             return RET_NO;
         }
-        p_activ_item = ss_uuid_search(&srvopt.uuid_tree, mach_uuid);
+
+        p_threadobj = ss_get_threadobj(mach_uuid);
+
+        p_acct_item = ss_find_acct_item(p_threadobj, username, userid);
+        if (!p_acct_item)
+        {
+            st_d_print("Account %s:%lu not exist!", username, userid);
+            return RET_NO;
+        }
+
+        p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, mach_uuid);
 
         if (!p_activ_item)
         {
@@ -275,27 +276,32 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
             return RET_NO;
         }
 
+        bufferevent_free(bev);
 
-        p_activ_item->bev_usr = bev;
-            
-        //　回复USR OK
-        ss_ret_cmd_ok(bev, p_activ_item->mach_uuid, DAEMON_USR);
+        P_C_ITEM p_c = (P_C_ITEM)malloc(sizeof(C_ITEM));
+        if (!p_c)
+        {
+            st_d_error("Allocation C_ITEM failed!");
+            return RET_NO;
+        }
+        p_c->socket = bufferevent_getfd(bev);
+        p_c->arg.ptr = p_activ_item;
 
-        st_d_print("Connection created for %s", SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
+        slist_add(&p_c->list, &p_threadobj->conn_queue);
+        write(p_threadobj->notify_send_fd, "U", 1);
 
-        // 查找到了ACTIV_ITEM，进行实际的传输关联
-        st_d_print("Settings bev callback args!");
-        bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, p_activ_item); 
+        st_d_print("Queue usr connect to thread(%lu) ok!", p_threadobj->thread_id); 
 
         return RET_YES;
     }
     // DAEMON->USR
     else if (p_head->direct == DAEMON_USR) 
     {
-        p_acct_item = ss_find_acct_item(&srvopt, username, userid);
+        p_threadobj = ss_get_threadobj(p_head->mach_uuid);
+        p_acct_item = ss_find_acct_item(p_threadobj, username, userid);
         if (!p_acct_item)
         {
-            st_d_print("%s:%d 未存在，创建之...", username, userid);
+            st_d_print("%s:%lu 用户尚未存在，创建之...", username, userid);
 
             p_acct_item = (P_ACCT_ITEM)malloc(sizeof(ACCT_ITEM));
             if (!p_acct_item)
@@ -307,11 +313,13 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
             strncpy(p_acct_item->username, username, sizeof(p_acct_item->username));
             p_acct_item->userid = userid;
             slist_init(&p_acct_item->items);
+
+            slist_add(&p_acct_item->list, &p_threadobj->acct_items);
         }
 
-        if (ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid))
+        if (ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid))
         {
-            st_d_print("ITEM %s:%lu Already exist!", username, userid);
+            st_d_print("SESSION ITEM %s:%lu Already exist!", username, userid);
             return RET_NO;
         }
 
@@ -322,15 +330,29 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
             return RET_NO;
         }
 
-        p_activ_item->base = base;
+        bufferevent_free(bev);
+
+        p_activ_item->base = p_threadobj->base; 
         p_activ_item->mach_uuid = p_head->mach_uuid;
-        p_activ_item->bev_daemon = bev;
 
-        slist_add(&p_acct_item->list, &srvopt.acct_items);
+        P_C_ITEM p_c = (P_C_ITEM)malloc(sizeof(C_ITEM));
+        if (!p_c)
+        {
+            st_d_error("Allocation C_ITEM failed!");
+            return RET_NO;
+        }
+        p_c->socket = bufferevent_getfd(bev);
+        p_c->arg.ptr = p_activ_item;
+
+
         slist_add(&p_activ_item->list, &p_acct_item->items);
-        ss_uuid_insert(&srvopt.uuid_tree, p_activ_item);
+        ss_uuid_insert(&p_threadobj->uuid_tree, p_activ_item);
 
-#if 0
+        slist_add(&p_c->list, &p_threadobj->conn_queue);
+        write(p_threadobj->notify_send_fd, "D", 1);
+
+#if 0     
+
         p_acct_item = NULL;
         p_activ_item = NULL;
         if (p_acct_item = ss_find_acct_item(&srvopt, username, userid)) 
@@ -343,81 +365,9 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
         }
 #endif
 
-        //　回复DAEMON OK
-        ss_ret_cmd_ok(bev, p_activ_item->mach_uuid, USR_DAEMON);
 
-        st_d_print("Settings bev callback args!");
-        bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, p_activ_item); 
+        st_d_print("Queue daemon connect to thread(%lu) ok!", p_threadobj->thread_id); 
 
         return RET_YES;
     }
 }
-
-extern SRV_OPT srvopt;
-extern struct  event_base *base;
-
-static RET_T ss_handle_dat(struct bufferevent *bev,
-                           P_PKG_HEAD p_head)
-{
-    char h_buff[4096];
-    size_t n = 0;
-    P_ACTIV_ITEM p_activ_item = NULL;
-
-    p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid);
-    if (!p_activ_item)
-    {
-        st_d_error("%s NOT FOUND!", SD_ID128_CONST_STR(p_head->mach_uuid));
-        return RET_NO;
-    }
-
-    memset(h_buff, 0, sizeof(h_buff));
-    memcpy(h_buff, p_head, HEAD_LEN);
-
-     // USR->DAEMON
-    if (p_head->direct == USR_DAEMON) 
-    {
-        if (bev != p_activ_item->bev_usr ||
-            !p_activ_item->bev_daemon) 
-        {
-            st_d_error("BEV CHECK ERROR!");
-            return RET_NO;
-        }
-
-        if(bufferevent_read(bev, GET_PKG_BODY(h_buff), p_head->dat_len) == p_head->dat_len)
-        {
-            bufferevent_write(p_activ_item->bev_daemon, 
-                                h_buff, HEAD_LEN + p_head->dat_len);
-            st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", p_head->dat_len); 
-        }
-        else
-        {
-            st_d_error("Fetch msg body error from usr!");
-            return RET_NO;
-        }
-
-    }
-    else if (p_head->direct == DAEMON_USR) 
-    {
-        if (bev != p_activ_item->bev_daemon ||
-            !p_activ_item->bev_usr) 
-        {
-            st_d_error("BEV CHECK ERROR!");
-            return RET_NO;
-        }
-
-        if(bufferevent_read(bev, GET_PKG_BODY(h_buff), p_head->dat_len) == p_head->dat_len)
-        {
-            bufferevent_write(p_activ_item->bev_usr, 
-                                h_buff, HEAD_LEN + p_head->dat_len);
-            st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", p_head->dat_len); 
-        }
-        else
-        {
-            st_d_error("Fetch msg body error from daemon!");
-            return RET_NO;
-        }
-    }
-
-    return RET_YES;
-}
-
