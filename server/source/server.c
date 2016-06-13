@@ -75,7 +75,6 @@ int main(int argc, char* argv[])
     }
 
     ss_create_worker_threads(srvopt.thread_num, srvopt.thread_objs);
-    sleep(5);
 
     /*带配置产生event_base对象*/
     struct event_config *cfg;

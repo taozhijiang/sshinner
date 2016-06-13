@@ -10,6 +10,14 @@
 #include "sshinner_s.h"
 
 
+/*
+ * Number of worker threads that have finished setting themselves up.
+ */
+static int init_count = 0;
+static pthread_mutex_t init_lock;
+static pthread_cond_t init_cond;
+
+
 void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
     P_ACTIV_ITEM p_item = NULL;
@@ -285,12 +293,32 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
 static void *thread_run(void *arg);
 static void thread_process(int fd, short which, void *arg);
 
+static void wait_for_thread_registration(int nthreads) 
+{
+    while (init_count < nthreads) {
+        pthread_cond_wait(&init_cond, &init_lock);
+    }
+}
+
+static void register_thread_initialized(void) 
+{
+    pthread_mutex_lock(&init_lock);
+    init_count++;
+    st_d_print("线程数目[%d]OK!", init_count);
+    pthread_cond_signal(&init_cond);
+    pthread_mutex_unlock(&init_lock);
+}
+
 extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads)
 {
     int i = 0;
 
     pthread_attr_t  attr;
     int ret = 0;
+
+    pthread_mutex_init(&init_lock, NULL);
+    pthread_cond_init(&init_cond, NULL);
+
 
     for (i=0; i < thread_num; ++i)
     {
@@ -327,11 +355,19 @@ extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads)
              SYS_ABORT("Cannot create worker thread %s", strerror(ret));
         }
     }
+
+
+    pthread_mutex_lock(&init_lock);
+    wait_for_thread_registration(thread_num);
+    pthread_mutex_unlock(&init_lock);
+
 }
 
 static void *thread_run(void *arg) 
 {
     P_THREAD_OBJ me = (P_THREAD_OBJ)arg;
+
+    register_thread_initialized();
 
     event_base_loop(me->base, 0);
 
