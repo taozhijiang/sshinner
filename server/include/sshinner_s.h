@@ -18,6 +18,8 @@
 #include <event2/event.h>
 #include <event2/bufferevent.h>
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #include "rbtree.h"
 
@@ -70,10 +72,15 @@ typedef struct _thread_obj {
     SLIST_HEAD   conn_queue;    /* queue of new connections to handle */
 } THREAD_OBJ, *P_THREAD_OBJ;
 
+
+static const char* PRIVATE_KEY_FILE = "./ssl/private.key";
+
 typedef struct _srv_opt
 {
     pthread_t       main_thread_id;   
     unsigned short  port;
+
+    RSA             *p_prikey;  //服务器用
 
     SLIST_HEAD      acct_items;
     int             thread_num;

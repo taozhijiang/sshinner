@@ -227,7 +227,7 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
                 event_base_loopexit(base, NULL);
             }
 
-            if(sc_daemon_connect_srv(srv_fd) != RET_YES)
+            if (sc_daemon_connect_srv(srv_fd) != RET_YES) 
             {
                 st_d_error("(DAEMON)服务端返回错误！");
                 event_base_loopexit(base, NULL);

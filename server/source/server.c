@@ -45,6 +45,28 @@ int main(int argc, char* argv[])
 
     dump_srv_opts(&srvopt);
 
+    OpenSSL_add_ssl_algorithms();
+    SSL_load_error_strings();
+    SSL_library_init();     //SSL_library_init() always returns "1"
+
+    /*加载SSL私钥*/
+    FILE *fp = fopen(PRIVATE_KEY_FILE, "r"); 
+    if (!fp)
+    {
+        st_d_error("SERVER读取私钥文件%s失败！", PRIVATE_KEY_FILE);
+        exit(EXIT_FAILURE);
+    }
+    srvopt.p_prikey = RSA_new(); 
+
+    if(PEM_read_RSAPrivateKey(fp, &srvopt.p_prikey, 0, 0) == NULL)
+    {
+        st_d_error("SERVER加载私钥失败！");
+        fclose(fp);
+        RSA_free(srvopt.p_prikey); 
+        exit(EXIT_FAILURE);
+    }
+    fclose(fp);
+
     srvopt.main_thread_id = pthread_self(); 
     srvopt.thread_objs = (P_THREAD_OBJ)calloc(sizeof(THREAD_OBJ), srvopt.thread_num);
     if (!srvopt.thread_objs) 
@@ -92,8 +114,10 @@ int main(int argc, char* argv[])
      */
     event_base_loop(main_base, 0);
 
+    if (srvopt.p_prikey) 
+        RSA_free(srvopt.p_prikey);
 
-    evconnlistener_free(listener);
+    evconnlistener_free(listener); 
     event_base_free(main_base);
 
     st_d_print("Program terminated!");

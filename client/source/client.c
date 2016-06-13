@@ -32,6 +32,14 @@ CLT_OPT cltopt;
 
 int main(int argc, char* argv[])
 {
+
+#if 1
+    // For debug with segment fault
+    struct sigaction sa;
+    sa.sa_handler = backtrace_info;
+    sigaction(SIGSEGV, &sa, NULL);
+#endif
+
     int opt_g = 0;
     memset(&cltopt, 0, sizeof(CLT_OPT));
 
@@ -55,6 +63,10 @@ int main(int argc, char* argv[])
         st_d_error("加载配置文件settings.json出错！");
         exit(EXIT_FAILURE);
     }
+
+    OpenSSL_add_ssl_algorithms();
+    SSL_load_error_strings();
+    SSL_library_init();     //SSL_library_init() always returns "1"
 
     //int sd_id128_from_string(const char *s, sd_id128_t *ret);
     sd_id128_get_machine(&cltopt.mach_uuid);
@@ -82,19 +94,19 @@ int main(int argc, char* argv[])
     /*连接服务器*/
     int srv_fd;
     srv_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sc_connect_srv(srv_fd) != RET_YES)
+    if(sc_connect_srv(srv_fd) != RET_YES) 
     {
         SYS_ABORT("连接服务器失败！");
     }
 
-    if (cltopt.C_TYPE == C_DAEMON) 
+    if(cltopt.C_TYPE == C_DAEMON) 
     {
-        if(sc_daemon_connect_srv(srv_fd) != RET_YES)
+        if (sc_daemon_connect_srv(srv_fd) != RET_YES) 
             SYS_ABORT("(Daemon)　服务器返回错误！");
     }
     else
     {
-        if(sc_usr_connect_srv(srv_fd) != RET_YES)
+        if (sc_usr_connect_srv(srv_fd) != RET_YES) 
             SYS_ABORT("(Usr)　服务器返回错误！");
     }
 
@@ -145,6 +157,7 @@ int main(int argc, char* argv[])
     /**
      * Main Loop Here
      */
+
     event_base_loop(base, 0);
         
     event_base_free(base);

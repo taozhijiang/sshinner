@@ -191,6 +191,25 @@ RET_T sc_daemon_connect_srv(int srv_fd)
 {
     char buff[4096];
     P_PKG_HEAD p_head = NULL;
+    RSA* p_rsa = NULL;
+
+    /*加载SSL公钥*/
+    FILE* fp = fopen(PUBLIC_KEY_FILE, "r");
+    if (!fp)
+    {
+        st_d_error("CLIENT读取公钥文件%s失败！", PUBLIC_KEY_FILE);
+        exit(EXIT_FAILURE);
+    }
+    p_rsa = RSA_new();
+
+    if(PEM_read_RSA_PUBKEY(fp, &p_rsa, 0, 0) == NULL)
+    {
+        st_d_error("CLIENT USR加载公钥失败！");
+        fclose(fp);
+        RSA_free(p_rsa); 
+        exit(EXIT_FAILURE);
+    }
+    fclose(fp);
 
     memset(buff, 0, sizeof(buff));
     p_head = GET_PKG_HEAD(buff);
@@ -198,7 +217,7 @@ RET_T sc_daemon_connect_srv(int srv_fd)
     p_head->type = 'C';
     p_head->direct = DAEMON_USR; 
     p_head->mach_uuid = cltopt.mach_uuid;
-    
+
     /*发送DAEMON的配置信息*/
     json_object* ajgResponse =  json_object_new_object(); 
     json_object_object_add (ajgResponse, "hostname", 
@@ -209,10 +228,32 @@ RET_T sc_daemon_connect_srv(int srv_fd)
                            json_object_new_int64(cltopt.userid)); 
 
     const char* ret_str = json_object_to_json_string (ajgResponse);
-    p_head->dat_len = strlen(ret_str) + 1;
-    p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
 
-    strcpy(GET_PKG_BODY(buff), ret_str);
+    if (strlen(ret_str) + 1 > (RSA_size(p_rsa) - 11 ) )
+    {
+        st_d_error("消息体太长：%d", strlen(ret_str)+1 );
+        json_object_put(ajgResponse);
+        RSA_free(p_rsa);
+        return RET_NO;
+    }
+
+    int len = RSA_public_encrypt(strlen(ret_str)+1, ret_str, GET_PKG_BODY(buff),
+                       p_rsa, RSA_PKCS1_PADDING);
+
+    if (len < 0 ) 
+    {
+        st_d_error("公钥加密失败：%d", len);
+        ERR_print_errors_fp(stderr);
+        json_object_put(ajgResponse);
+        RSA_free(p_rsa);
+        return RET_NO;
+    }
+
+    RSA_free(p_rsa);
+
+    p_head->dat_len = len;
+    p_head->crc = crc32(0L, GET_PKG_BODY(buff), len);
+
     write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
 
     json_object_put(ajgResponse);
@@ -234,6 +275,26 @@ RET_T sc_usr_connect_srv(int srv_fd)
 {
     char buff[4096];
     P_PKG_HEAD p_head = NULL;
+    RSA* p_rsa = NULL;
+
+    /*加载SSL公钥*/
+    FILE* fp = fopen(PUBLIC_KEY_FILE, "r");
+    if (!fp)
+    {
+        st_d_error("CLIENT读取公钥文件%s失败！", PUBLIC_KEY_FILE);
+        exit(EXIT_FAILURE);
+    }
+    p_rsa = RSA_new();
+
+    if(PEM_read_RSA_PUBKEY(fp, &p_rsa, 0, 0) == NULL)
+    {
+        st_d_error("CLIENT USR加载公钥失败！");
+        fclose(fp);
+        RSA_free(p_rsa); 
+        return RET_NO;
+    }
+
+    fclose(fp);
 
     memset(buff, 0, sizeof(buff));
     p_head = GET_PKG_HEAD(buff);
@@ -241,6 +302,7 @@ RET_T sc_usr_connect_srv(int srv_fd)
     p_head->type = 'C';
     p_head->direct = USR_DAEMON; 
     p_head->mach_uuid = cltopt.mach_uuid;
+
     
     /*发送DAEMON的配置信息*/
     json_object* ajgResponse =  json_object_new_object(); 
@@ -253,11 +315,33 @@ RET_T sc_usr_connect_srv(int srv_fd)
     json_object_object_add (ajgResponse, "r_mach_uuid", 
                            json_object_new_string(SD_ID128_CONST_STR(cltopt.session_uuid))); 
 
-    const char* ret_str = json_object_to_json_string (ajgResponse);
-    p_head->dat_len = strlen(ret_str) + 1;
-    p_head->crc = crc32(0L, ret_str, strlen(ret_str) + 1);
 
-    strcpy(GET_PKG_BODY(buff), ret_str);
+    const char* ret_str = json_object_to_json_string (ajgResponse);
+
+    if (strlen(ret_str) + 1 > (RSA_size(p_rsa) - 11 ) )
+    {
+        st_d_error("消息体太长：%d", strlen(ret_str)+1 );
+        ERR_print_errors_fp(stderr);
+        json_object_put(ajgResponse);
+        RSA_free(p_rsa); 
+        return RET_NO;
+    }
+
+    int len = RSA_public_encrypt(strlen(ret_str)+1, ret_str, GET_PKG_BODY(buff),
+                       p_rsa, RSA_PKCS1_PADDING);
+
+    RSA_free(p_rsa); 
+
+    if (len < 0 ) 
+    {
+        st_d_error("公钥加密失败：%d", len);
+        json_object_put(ajgResponse);
+        return RET_NO;
+    }
+
+    p_head->dat_len = len;
+    p_head->crc = crc32(0L, GET_PKG_BODY(buff), len);
+
     write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
 
     json_object_put(ajgResponse);

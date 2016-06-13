@@ -15,6 +15,8 @@
 #include <event2/event.h>
 #include <event2/bufferevent.h>
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #include "sshinner.h"
 #include "st_others.h"
@@ -35,6 +37,8 @@ typedef struct _portmap {
 
 #define MAX_PORTMAP_NUM 10
 
+
+static const char* PUBLIC_KEY_FILE = "./ssl/public.key";
 
 typedef struct _clt_opt
 {

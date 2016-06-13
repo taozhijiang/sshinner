@@ -151,7 +151,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
             if (crc != head.crc) 
             {
                 st_d_error("数据包校验失败: %lu-%lu", crc, head.crc); 
-                st_d_print("=>%s", (char*) dat);
+                st_d_print("=>%s", (char*) dat); //呵呵，已经加密了
                 free(dat);
                 return;
             }
@@ -175,7 +175,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 static RET_T ss_main_handle_ctl(struct bufferevent *bev, 
                            P_PKG_HEAD p_head, char* dat)
 {
-    json_object *new_obj = json_tokener_parse(dat);
+    json_object *new_obj = NULL;
     json_object *p_store_obj = NULL;
 
     P_THREAD_OBJ    p_threadobj = NULL;
@@ -186,10 +186,24 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
     unsigned long   userid;
     char uuid_s     [33];
     sd_id128_t      mach_uuid;
+    char dec_buf    [4096];
+
     
+    /*服务器私钥解密数据*/
+    memset(dec_buf, 0, sizeof(dec_buf));
+    int len = RSA_private_decrypt(p_head->dat_len, dat, dec_buf, 
+                       srvopt.p_prikey, RSA_PKCS1_PADDING);
+    if (len < 0 || len > (4096-HEAD_LEN) )
+    {
+        st_d_error("服务端私钥解密数据%d出错！", len);
+        return RET_NO;
+    }
+
+    new_obj = json_tokener_parse(dec_buf);
+
     if (!new_obj)
     {
-        st_d_error("Json parse error: %s", dat);
+        st_d_error("Json parse error: %s", dec_buf);
         return RET_NO;
     }
 
