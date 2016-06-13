@@ -207,7 +207,7 @@ static RET_T ss_handle_ctl(struct bufferevent *bev,
     // USR->DAEMON
     if (p_head->direct == USR_DAEMON) 
     {
-        if (p_head->ext == 'T') 
+        if (p_head->ext == HD_EXT_TRIGGER) 
         {
             bufferevent_write(p_activ_item->bev_daemon, 
                               p_head, HEAD_LEN);

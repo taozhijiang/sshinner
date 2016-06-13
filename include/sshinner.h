@@ -10,6 +10,13 @@
 enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
 };
 
+#define HD_EXT_TRIGGER   'T'
+#define HD_EXT_TERMINATE 'Z'
+#define HD_EXT_OK        'O'
+#define HD_EXT_ERROR     'E'
+#define HD_EXT_KEEP      'K'
+#define HD_EXT_DAT_ERROR 'D'
+
 /**
  * 简单数据类型，可以直接赋值或者拷贝
  */

@@ -75,7 +75,7 @@ extern void ss_ret_cmd_ok(struct bufferevent *bev,
     memset(&ret_head, 0, HEAD_LEN);
     ret_head.type = 'C';
     ret_head.mach_uuid = uuid;
-    ret_head.ext = 'O';
+    ret_head.ext = HD_EXT_OK;
     ret_head.direct = direct; 
 
     bufferevent_write(bev, &ret_head, HEAD_LEN);
@@ -90,7 +90,7 @@ extern void ss_ret_cmd_err(struct bufferevent *bev,
     memset(&ret_head, 0, HEAD_LEN);
     ret_head.type = 'C';
     ret_head.mach_uuid = uuid;
-    ret_head.ext = 'E';
+    ret_head.ext = HD_EXT_ERROR; 
     ret_head.direct = direct; 
 
     bufferevent_write(bev, &ret_head, HEAD_LEN);
@@ -105,7 +105,7 @@ extern void ss_ret_dat_err(struct bufferevent *bev,
     memset(&ret_head, 0, HEAD_LEN);
     ret_head.type = 'C';
     ret_head.mach_uuid = uuid;
-    ret_head.ext = 'D';
+    ret_head.ext = HD_EXT_DAT_ERROR; 
     ret_head.direct = direct; 
 
     bufferevent_write(bev, &ret_head, HEAD_LEN);
@@ -121,7 +121,7 @@ extern void ss_ret_cmd_keep(struct bufferevent *bev,
     memset(&ret_head, 0, HEAD_LEN);
     ret_head.type = 'C';
     ret_head.mach_uuid = uuid;
-    ret_head.ext = 'K';
+    ret_head.ext = HD_EXT_KEEP; 
     ret_head.direct = direct; 
 
     bufferevent_write(bev, &ret_head, HEAD_LEN);

@@ -260,7 +260,7 @@ RET_T sc_daemon_connect_srv(int srv_fd)
 
     PKG_HEAD ret_head;
     read(srv_fd, &ret_head, HEAD_LEN); 
-    if (ret_head.type == 'C' && ret_head.direct == USR_DAEMON && ret_head.ext == 'O') 
+    if (ret_head.type == 'C' && ret_head.direct == USR_DAEMON && ret_head.ext == HD_EXT_OK) 
     {
         return RET_YES;
     }
@@ -348,7 +348,7 @@ RET_T sc_usr_connect_srv(int srv_fd)
 
     PKG_HEAD ret_head;
     read(srv_fd, &ret_head, HEAD_LEN);
-    if (ret_head.type == 'C' && ret_head.direct == DAEMON_USR && ret_head.ext == 'O') 
+    if (ret_head.type == 'C' && ret_head.direct == DAEMON_USR && ret_head.ext == HD_EXT_OK) 
     {
         return RET_YES;
     }
