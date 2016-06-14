@@ -29,7 +29,6 @@
 # Autotools stuff
 .deps
 .dirstamp
-Makefile
 Makefile.in
 
 # Libtool stuff
@@ -141,7 +140,5 @@ tags
 *.vpwhist
 
 # Project exec
-server/server
-client/client
 obj/
 Debug/
