@@ -78,6 +78,11 @@ extern RET_T load_settings_client(P_CLT_OPT p_opt)
             if (json_object_object_get_ex(p_class,"portmaps",&p_store_obj))
             {
                 size_t len = json_object_array_length(p_store_obj);
+                if (len > MAX_PORT_NUM)
+                {
+                    st_d_error("只支持%d/%d", MAX_PORT_NUM, len); 
+                    len = MAX_PORT_NUM;
+                }
                 size_t i = 0;
                 int from, to;
                 for (i=0; i<len; ++i)
@@ -87,7 +92,6 @@ extern RET_T load_settings_client(P_CLT_OPT p_opt)
                                              json_object_object_get(p_tmp, "usrport"));
                     p_opt->maps[i].daemonport = json_object_get_int(
                                              json_object_object_get(p_tmp, "daemonport"));
-                    p_opt->maps[i].bev = NULL;
                 }
             }
         }
@@ -121,7 +125,7 @@ extern void dump_clt_opts(P_CLT_OPT p_opt)
     if (p_opt->C_TYPE == C_USR) 
     {
         int i = 0;
-        for (i = 0; i < MAX_PORTMAP_NUM; i++) 
+        for (i = 0; i < MAX_PORT_NUM; i++) 
         {
             if (p_opt->maps[i].usrport) 
             {
@@ -137,31 +141,13 @@ extern void dump_clt_opts(P_CLT_OPT p_opt)
 }
 
 
-// used from USR SIDE
-P_PORTMAP sc_find_usr_portmap(unsigned short usrport)
-{
-    P_PORTMAP p_map = NULL;
-    int i = 0;
-
-    for (i = 0; i < MAX_PORTMAP_NUM; i++) 
-    {
-        if (cltopt.maps[i].usrport == usrport) 
-        {
-            p_map = &cltopt.maps[i];
-            return p_map;
-        }
-    }
-
-    return p_map;
-}
-
 // used from DAEMON SIDE
 P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit)
 {
     P_PORTMAP p_map = NULL;
     int i = 0;
 
-    for (i = 0; i < MAX_PORTMAP_NUM; i++) 
+    for (i = 0; i < MAX_PORT_NUM; i++) 
     {
         if (cltopt.maps[i].daemonport == daemonport) 
         {
@@ -173,13 +159,12 @@ P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit)
     if (! createit)
         return NULL;
 
-    for (i = 0; i < MAX_PORTMAP_NUM; i++)
+    for (i = 0; i < MAX_PORT_NUM; i++)
     {
         if (cltopt.maps[i].daemonport == 0) 
         {
             p_map = &cltopt.maps[i];
             p_map->daemonport = daemonport;
-            p_map->bev = NULL;
             break;
         }
     }
@@ -187,10 +172,10 @@ P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit)
     return p_map;
 }
 
-RET_T sc_daemon_connect_srv(int srv_fd)
+RET_T sc_daemon_init_srv(int srv_fd)
 {
     char buff[4096];
-    P_PKG_HEAD p_head = NULL;
+    P_CTL_HEAD p_head = NULL;
     RSA* p_rsa = NULL;
 
     /*加载SSL公钥*/
@@ -212,10 +197,10 @@ RET_T sc_daemon_connect_srv(int srv_fd)
     fclose(fp);
 
     memset(buff, 0, sizeof(buff));
-    p_head = GET_PKG_HEAD(buff);
+    p_head = GET_CTL_HEAD(buff);
 
-    p_head->type = 'C';
     p_head->direct = DAEMON_USR; 
+    p_head->cmd = HD_CMD_INIT;
     p_head->mach_uuid = cltopt.mach_uuid;
 
     /*发送DAEMON的配置信息*/
@@ -237,7 +222,7 @@ RET_T sc_daemon_connect_srv(int srv_fd)
         return RET_NO;
     }
 
-    int len = RSA_public_encrypt(strlen(ret_str)+1, ret_str, GET_PKG_BODY(buff),
+    int len = RSA_public_encrypt(strlen(ret_str)+1, ret_str, GET_CTL_BODY(buff),
                        p_rsa, RSA_PKCS1_PADDING);
 
     if (len < 0 ) 
@@ -252,15 +237,15 @@ RET_T sc_daemon_connect_srv(int srv_fd)
     RSA_free(p_rsa);
 
     p_head->dat_len = len;
-    p_head->crc = crc32(0L, GET_PKG_BODY(buff), len);
+    p_head->crc = crc32(0L, GET_CTL_BODY(buff), len);
 
-    write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
+    write(srv_fd, buff, CTL_HEAD_LEN + p_head->dat_len);
 
     json_object_put(ajgResponse);
 
-    PKG_HEAD ret_head;
-    read(srv_fd, &ret_head, HEAD_LEN); 
-    if (ret_head.type == 'C' && ret_head.direct == USR_DAEMON && ret_head.ext == HD_EXT_OK) 
+    CTL_HEAD ret_head;
+    read(srv_fd, &ret_head, CTL_HEAD_LEN); 
+    if (ret_head.direct == USR_DAEMON && ret_head.cmd == HD_CMD_OK) 
     {
         return RET_YES;
     }
@@ -271,10 +256,10 @@ RET_T sc_daemon_connect_srv(int srv_fd)
 
 }
 
-RET_T sc_usr_connect_srv(int srv_fd)
+RET_T sc_usr_init_srv(int srv_fd)
 {
     char buff[4096];
-    P_PKG_HEAD p_head = NULL;
+    P_CTL_HEAD p_head = NULL;
     RSA* p_rsa = NULL;
 
     /*加载SSL公钥*/
@@ -297,10 +282,10 @@ RET_T sc_usr_connect_srv(int srv_fd)
     fclose(fp);
 
     memset(buff, 0, sizeof(buff));
-    p_head = GET_PKG_HEAD(buff);
+    p_head = GET_CTL_HEAD(buff);
 
-    p_head->type = 'C';
-    p_head->direct = USR_DAEMON; 
+    p_head->direct = USR_DAEMON;
+    p_head->cmd = HD_CMD_INIT; 
     p_head->mach_uuid = cltopt.mach_uuid;
 
     
@@ -327,7 +312,7 @@ RET_T sc_usr_connect_srv(int srv_fd)
         return RET_NO;
     }
 
-    int len = RSA_public_encrypt(strlen(ret_str)+1, ret_str, GET_PKG_BODY(buff),
+    int len = RSA_public_encrypt(strlen(ret_str)+1, ret_str, GET_CTL_BODY(buff),
                        p_rsa, RSA_PKCS1_PADDING);
 
     RSA_free(p_rsa); 
@@ -340,15 +325,15 @@ RET_T sc_usr_connect_srv(int srv_fd)
     }
 
     p_head->dat_len = len;
-    p_head->crc = crc32(0L, GET_PKG_BODY(buff), len);
+    p_head->crc = crc32(0L, GET_CTL_BODY(buff), len);
 
-    write(srv_fd, buff, HEAD_LEN + p_head->dat_len);
+    write(srv_fd, buff, CTL_HEAD_LEN + p_head->dat_len);
 
     json_object_put(ajgResponse);
 
-    PKG_HEAD ret_head;
-    read(srv_fd, &ret_head, HEAD_LEN);
-    if (ret_head.type == 'C' && ret_head.direct == DAEMON_USR && ret_head.ext == HD_EXT_OK) 
+    CTL_HEAD ret_head;
+    read(srv_fd, &ret_head, CTL_HEAD_LEN);
+    if (ret_head.direct == DAEMON_USR && ret_head.cmd == HD_CMD_OK) 
     {
         return RET_YES;
     }
@@ -357,6 +342,34 @@ RET_T sc_usr_connect_srv(int srv_fd)
         return RET_NO;
     }
 
+}
+
+
+/**
+ * 没有消息负载的发送
+ */
+RET_T sc_send_head_cmd(int cmd, unsigned long extra_param, 
+                        unsigned short usrport, unsigned daemonport)
+{
+    CTL_HEAD head;
+    memset(&head, 0, CTL_HEAD_LEN);
+
+    if (cltopt.srv_bev == NULL) 
+    {
+        st_d_error("cltopt.srv_bev == NULL");
+        return RET_NO;
+    }
+
+    head.direct = (cltopt.C_TYPE == C_USR ? USR_DAEMON : DAEMON_USR); 
+    head.cmd = cmd;
+    head.extra_param = extra_param;
+    head.mach_uuid = cltopt.session_uuid;
+    head.usrport = usrport;
+    head.daemonport = daemonport;
+
+    bufferevent_write(cltopt.srv_bev, &head, CTL_HEAD_LEN);
+
+    return RET_YES;
 }
 
 

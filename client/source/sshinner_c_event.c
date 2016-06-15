@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <systemd/sd-id128.h> 
 
+#include <assert.h>
 
 #include <json-c/json.h>
 #include <json-c/json_tokener.h>
@@ -15,15 +16,15 @@
 void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     size_t n = 0;
-    PKG_HEAD head;
+    CTL_HEAD head;
     P_PORTMAP p_map = NULL;
 
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
-    if ( evbuffer_remove(input, &head, HEAD_LEN) != HEAD_LEN)
+    if ( evbuffer_remove(input, &head, CTL_HEAD_LEN) != CTL_HEAD_LEN)
     {
-        st_d_print("读取数据包头%d错误!", HEAD_LEN);
+        st_d_print("读取数据包头%d错误!", CTL_HEAD_LEN);
         return;
     }
 
@@ -33,140 +34,96 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
                   SD_ID128_CONST_STR(head.mach_uuid), SD_ID128_CONST_STR(cltopt.session_uuid)); 
     }
 
-    if (head.type == 'C') 
+    if (head.cmd == HD_CMD_ERROR) 
     {
-        if (head.ext == 'E') 
-        {
-            st_d_error("SERVER RETURNED ERROR!");
-            exit(EXIT_SUCCESS);
-        }
-
-        if (head.ext == 'T')
-        {
-            p_map = sc_find_daemon_portmap(head.daemonport, 1); 
-            if (!p_map) 
-            {
-                st_d_error("DAEMON端端口映射表创建失败！");
-                return;
-            }
-
-            if (!p_map->bev) 
-            {
-                st_d_print("DAEMON端创建本地EV！");
-
-                p_map->usrport = head.usrport;
-
-                int fd = socket(AF_INET, SOCK_STREAM, 0);
-                int reuseaddr_on = 1;
-                if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
-                    sizeof(reuseaddr_on)) == -1)
-                {
-                    st_d_error("Reuse socket opt faile!\n");
-                    return;
-                }
-                struct sockaddr_in  local_srv;
-                local_srv.sin_family = AF_INET;
-                local_srv.sin_addr.s_addr = inet_addr("127.0.0.1");
-                local_srv.sin_port = htons(head.daemonport);
-
-                if (connect(fd, (struct sockaddr *)&local_srv, sizeof(local_srv))) 
-                {
-                    st_d_error("连接本地端口%d失败！", head.daemonport); 
-                    return;
-                }
-                else
-                {
-                    st_d_print("连接本地端口%d OK！", head.daemonport); 
-                }
-
-                evutil_make_socket_nonblocking(fd);
-                struct event_base *base = bufferevent_get_base(bev);
-                struct bufferevent *n_bev = 
-                    bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-                bufferevent_setcb(n_bev, bufferread_cb, NULL, bufferevent_cb, p_map);
-                p_map->bev = n_bev;
-                bufferevent_enable(n_bev, EV_READ|EV_WRITE);
-
-                printf("%d, %d, %p", p_map->daemonport, p_map->usrport, p_map->bev);
-                return;
-            }
-
-        }
+        st_d_error("SERVER RETURNED ERROR!");
+        exit(EXIT_SUCCESS);
     }
-    else
+
+    if (head.cmd == HD_CMD_CONN) 
     {
-        char *dat = malloc(head.dat_len);
-        if (!dat)
-        {
-            st_d_error("申请内存[%d]失败！", head.dat_len); 
-            return;
-        }
-        
-        memset(dat, 0, head.dat_len);
-        size_t offset = 0;
-        while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
-        {
-            if (n < (head.dat_len-offset)) 
-            {
-                offset += n;
-                continue;
-            }
-            else
-            break;
-        }
-
-        ulong crc = crc32(0L, dat, head.dat_len);
-        if (crc != head.crc) 
-        {
-            st_d_error("数据包校验失败: %lu-%lu", crc, head.crc); 
-            st_d_print("=>%s", (char*) dat);
-            free(dat);
-            return;
-        }
-
-
-        // 数据，根据 USR DAEMON 角色处理
+        assert(cltopt.C_TYPE == C_DAEMON);
         if (cltopt.C_TYPE == C_DAEMON) 
         {
-            if (head.direct != USR_DAEMON) 
+            sc_find_daemon_portmap(head.daemonport, 1);
+            P_PORTTRANS p_trans = NULL;
+            int i = 0;
+            for (i=0; i < MAX_PORT_NUM; ++i)
             {
-                st_d_error("数据包传向校验失败！");
-                free(dat);
+                if (cltopt.trans[i].l_port == 0) 
+                {
+                    p_trans = &cltopt.trans[i];
+                    break;
+                }
+            }
+            
+            if (!p_trans)
+            {
+                st_d_error("本地无空闲TRANS!");
                 return;
             }
 
-            p_map = sc_find_daemon_portmap(head.daemonport, 0); 
-            printf("%d, %d, %p", p_map->daemonport, p_map->usrport, p_map->bev);
-            if (!p_map) 
+            /*建立本地连接*/
+            int local_fd = socket(AF_INET, SOCK_STREAM, 0);
+            int reuseaddr_on = 1;
+            if (setsockopt(local_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
+                sizeof(reuseaddr_on)) == -1)
             {
-                st_d_error("DAEMON端端口映射表查找失败！");
-                free(dat);
+                st_d_error("Reuse socket opt faile!\n");
                 return;
             }
+            struct sockaddr_in  local_srv;
+            local_srv.sin_family = AF_INET;
+            local_srv.sin_addr.s_addr = inet_addr("127.0.0.1");
+            local_srv.sin_port = htons(head.daemonport);
 
-            bufferevent_write(p_map->bev, dat, head.dat_len);
-            free(dat);
-
-        }
-        else if (cltopt.C_TYPE == C_USR) 
-        {
-            if (head.direct != DAEMON_USR) 
+            if (connect(local_fd, (struct sockaddr *)&local_srv, sizeof(local_srv))) 
             {
-                st_d_error("数据包传向校验失败！");
-                free(dat);
+                st_d_error("连接本地端口%d失败！", head.daemonport); 
                 return;
             }
-
-            p_map = sc_find_usr_portmap(head.usrport);
-            if (!p_map || !p_map->bev) 
+            else
             {
-                SYS_ABORT("USR端本地端口应该存在！");
+                st_d_print("连接本地端口%d OK！", head.daemonport); 
             }
 
-            bufferevent_write(p_map->bev, dat, head.dat_len);
-            free(dat);
+
+            /*建立服务器连接*/
+            int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+            if(sc_connect_srv(srv_fd) != RET_YES) 
+            {
+                st_d_error("连接服务器失败！");
+                return;
+            }
+            sc_send_head_cmd(HD_CMD_CONN, head.extra_param, head.usrport,
+                             head.daemonport);
+
+
+            struct event_base *base = bufferevent_get_base(bev);
+
+            evutil_make_socket_nonblocking(local_fd);
+            struct bufferevent *local_bev = 
+                bufferevent_socket_new(base, local_fd, BEV_OPT_CLOSE_ON_FREE);
+            bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_map);
+            bufferevent_enable(local_bev, EV_READ|EV_WRITE);
+
+            evutil_make_socket_nonblocking(srv_fd); 
+            struct bufferevent *srv_bev = 
+                bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
+            bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
+            bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
+
+
+            p_trans->daemonport = head.daemonport;
+            p_trans->usrport = head.usrport;
+            p_trans->l_port = head.extra_param;
+            p_trans->local_bev = local_bev;
+            p_trans->srv_bev = srv_bev;
+
+            st_d_print("DAEMON端准备OK!");
         }
     }
+
 }
 
 
@@ -188,55 +145,6 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
-
-        // BEV_OPT_CLOSE_ON_FREE already closed the socket
-        if (cltopt.C_TYPE == C_USR) 
-        {
-            st_d_print("DAEMON已经退出，本端挂起！");
-            exit(EXIT_SUCCESS);
-        }
-        else
-        {
-            bufferevent_free(bev); 
-
-            int i = 0;
-            for (i = 0; i < MAX_PORTMAP_NUM; i++) 
-            {
-                if (cltopt.maps[i].daemonport != 0) 
-                {
-                    st_d_print("释放端口映射: %d-%d", cltopt.maps[i].daemonport, cltopt.maps[i].usrport); 
-                    cltopt.maps[i].usrport = 0;
-                    cltopt.maps[i].daemonport = 0;
-                    if (cltopt.maps[i].bev)
-                    {
-                        bufferevent_free(cltopt.maps[i].bev);
-                        cltopt.maps[i].bev = NULL;
-                    }
-                }
-            }
-
-            /*重新和服务器建立连接*/
-            st_d_print("DAEMON端重连服务器！");
-
-            int srv_fd;
-            srv_fd = socket(AF_INET, SOCK_STREAM, 0);
-
-            if (sc_connect_srv(srv_fd) != RET_YES)
-            {
-                st_d_error("连接服务器失败！");
-                event_base_loopexit(base, NULL);
-            }
-
-            if (sc_daemon_connect_srv(srv_fd) != RET_YES) 
-            {
-                st_d_error("(DAEMON)服务端返回错误！");
-                event_base_loopexit(base, NULL);
-            }
-       
-            sc_set_eventcb_srv(srv_fd, base);
-            st_d_print("(DAEMON)重连OK！");
-
-        }
     }
     /*else if (events & BEV_EVENT_TIMEOUT) 
     {
@@ -310,47 +218,22 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
  */
 void bufferread_cb(struct bufferevent *bev, void *ptr)
 {
-    P_PORTMAP p_map = (P_PORTMAP)ptr; 
-    char h_buff[4096];  /*添加头部优化*/
-    P_PKG_HEAD p_head = NULL;
-    size_t n = 0;
+    P_PORTTRANS p_trans = (P_PORTTRANS)ptr; 
 
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
-    memset(h_buff, 0, sizeof(h_buff));
-
-    if (cltopt.C_TYPE == C_USR)
+    if (bev == p_trans->local_bev && p_trans->srv_bev) 
     {
-        p_head = GET_PKG_HEAD(h_buff);
-        p_head->type = 'D';
-        p_head->direct = USR_DAEMON;    // USR->DAEMON
-        p_head->mach_uuid = cltopt.session_uuid;
-        p_head->daemonport = p_map->daemonport;
-        p_head->usrport = p_map->usrport;
-
-        while ((n = evbuffer_remove(input, GET_PKG_BODY(h_buff), sizeof(h_buff) - HEAD_LEN)) > 0) 
-        {
-            p_head->dat_len = n;
-            p_head->crc = crc32(0L, GET_PKG_BODY(h_buff), n);
-            bufferevent_write(cltopt.srv_bev, h_buff, HEAD_LEN + p_head->dat_len);
-        }
+        bufferevent_write_buffer(p_trans->srv_bev, bufferevent_get_input(bev));
+    }
+    else if (bev == p_trans->srv_bev && p_trans->local_bev) 
+    {
+        bufferevent_write_buffer(p_trans->local_bev, bufferevent_get_input(bev));
     }
     else
     {
-        p_head = GET_PKG_HEAD(h_buff);
-        p_head->type = 'D';
-        p_head->direct = DAEMON_USR;    // USR->DAEMON
-        p_head->mach_uuid = cltopt.session_uuid;
-        p_head->daemonport = p_map->daemonport;
-        p_head->usrport = p_map->usrport;
-
-        while ((n = evbuffer_remove(input, GET_PKG_BODY(h_buff), sizeof(h_buff) - HEAD_LEN)) > 0) 
-        {
-            p_head->dat_len = n;
-            p_head->crc = crc32(0L, GET_PKG_BODY(h_buff), n); 
-            bufferevent_write(cltopt.srv_bev, h_buff, HEAD_LEN + p_head->dat_len);
-        }
+        SYS_ABORT("WRRRRRR!");
     }
 
     return;
@@ -374,16 +257,58 @@ void accept_conn_cb(struct evconnlistener *listener,
 
     /* We got a new connection! Set up a bufferevent for it. */
     struct event_base *base = evconnlistener_get_base(listener);
-    struct bufferevent *bev = 
+
+    int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sc_connect_srv(srv_fd) != RET_YES) 
+    {
+        st_d_error("连接服务器失败！");
+        return;
+    }
+
+    P_PORTTRANS p_trans = NULL;
+
+    int i = 0;
+    for (i=0; i < MAX_PORT_NUM; ++i)
+    {
+        if (cltopt.trans[i].l_port == 0) 
+        {
+            p_trans = &cltopt.trans[i];
+            break;
+        }
+    }
+
+    if (!p_trans)
+    {
+        st_d_error("本地无空闲TRANS!");
+        return;
+    }
+
+    struct bufferevent *local_bev = 
         bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
+    bufferevent_enable(local_bev, EV_READ|EV_WRITE);
 
-    p_map->bev = bev;
+    struct bufferevent *srv_bev = 
+        bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(srv_bev, srv_bufferread_cb, NULL, srv_bufferevent_cb, p_trans);
+    bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
-    /**
-     * 对于服务端，一般都是阻塞在读，而如果要写，一般在read_cb中写回就可以了
-     */
-    bufferevent_setcb(bev, bufferread_cb, NULL, bufferevent_cb, p_map);
-    bufferevent_enable(bev, EV_READ|EV_WRITE);
+    p_trans->usrport = p_map->usrport;
+    p_trans->daemonport = p_map->daemonport;
+    p_trans->local_bev = local_bev;
+    p_trans->srv_bev = srv_bev;
+
+    /* 向服务器报告连接请求 */
+    CTL_HEAD head;
+    memset(&head, 0, CTL_HEAD_LEN);
+    head.cmd = HD_CMD_CONN;
+    head.daemonport = p_map->daemonport;
+    head.usrport = p_map->usrport;
+    head.extra_param = atoi(sbuf);
+    head.mach_uuid = cltopt.session_uuid;
+    head.direct = USR_DAEMON;
+
+    bufferevent_write(srv_bev, &head, CTL_HEAD_LEN);
 
     st_d_print("客户端创建BEV OK！");
 
@@ -392,17 +317,6 @@ void accept_conn_cb(struct evconnlistener *listener,
      * 为了避免这种情况，客户端接收到conn消息之后，需要先向DAEMON端发送一个控制 
      * 消息，打通DAEMON端的数据传输接口 
      */
-
-    PKG_HEAD head;
-    memset(&head, 0, HEAD_LEN);
-    head.type = 'C';
-    head.ext = 'T';     // trigger
-    head.direct = USR_DAEMON;    // USR_DAEMON
-    head.mach_uuid = cltopt.session_uuid;
-    head.daemonport = p_map->daemonport;
-    head.usrport = p_map->usrport;
-
-    bufferevent_write(cltopt.srv_bev, &head, HEAD_LEN);
 
     return;
 }

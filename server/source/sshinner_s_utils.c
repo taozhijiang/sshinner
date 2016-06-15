@@ -71,14 +71,13 @@ extern void dump_srv_opts(P_SRV_OPT p_opt)
 extern void ss_ret_cmd_ok(struct bufferevent *bev,
                           sd_id128_t uuid, enum DIREC direct)
 {
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
+    CTL_HEAD ret_head;
+    memset(&ret_head, 0, CTL_HEAD_LEN);
     ret_head.mach_uuid = uuid;
-    ret_head.ext = HD_EXT_OK;
+    ret_head.cmd = HD_CMD_OK;
     ret_head.direct = direct; 
 
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
+    bufferevent_write(bev, &ret_head, CTL_HEAD_LEN);
 
     return;
 }
@@ -86,46 +85,14 @@ extern void ss_ret_cmd_ok(struct bufferevent *bev,
 extern void ss_ret_cmd_err(struct bufferevent *bev,
                            sd_id128_t uuid, enum DIREC direct)
 {
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
+    CTL_HEAD ret_head;
+    memset(&ret_head, 0, CTL_HEAD_LEN);
     ret_head.mach_uuid = uuid;
-    ret_head.ext = HD_EXT_ERROR; 
+    ret_head.cmd = HD_CMD_ERROR; 
     ret_head.direct = direct; 
 
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
+    bufferevent_write(bev, &ret_head, CTL_HEAD_LEN);
 
     return;
 }
 
-extern void ss_ret_dat_err(struct bufferevent *bev,
-                           sd_id128_t uuid, enum DIREC direct)
-{
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
-    ret_head.mach_uuid = uuid;
-    ret_head.ext = HD_EXT_DAT_ERROR; 
-    ret_head.direct = direct; 
-
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
-
-    return;
-}
-
-
-extern void ss_ret_cmd_keep(struct bufferevent *bev,
-                            sd_id128_t uuid, enum DIREC direct)
-{
-    PKG_HEAD ret_head;
-    memset(&ret_head, 0, HEAD_LEN);
-    ret_head.type = 'C';
-    ret_head.mach_uuid = uuid;
-    ret_head.ext = HD_EXT_KEEP; 
-    ret_head.direct = direct; 
-
-    bufferevent_write(bev, &ret_head, HEAD_LEN);
-
-    return;
-
-}

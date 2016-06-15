@@ -92,8 +92,7 @@ int main(int argc, char* argv[])
     st_d_print("当前复用Event模式: %s", event_base_get_method(base)); // epoll
 
     /*连接服务器*/
-    int srv_fd;
-    srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
     if(sc_connect_srv(srv_fd) != RET_YES) 
     {
         SYS_ABORT("连接服务器失败！");
@@ -101,12 +100,12 @@ int main(int argc, char* argv[])
 
     if(cltopt.C_TYPE == C_DAEMON) 
     {
-        if (sc_daemon_connect_srv(srv_fd) != RET_YES) 
+        if (sc_daemon_init_srv(srv_fd) != RET_YES) 
             SYS_ABORT("(Daemon)　服务器返回错误！");
     }
     else
     {
-        if (sc_usr_connect_srv(srv_fd) != RET_YES) 
+        if (sc_usr_init_srv(srv_fd) != RET_YES) 
             SYS_ABORT("(Usr)　服务器返回错误！");
     }
 
@@ -119,7 +118,7 @@ int main(int argc, char* argv[])
     if (cltopt.C_TYPE == C_USR)
     {
         int i = 0;
-        for (i=0; i<MAX_PORTMAP_NUM; i++)
+        for (i=0; i<MAX_PORT_NUM; i++)
         {
             if (cltopt.maps[i].usrport) 
             {
@@ -141,7 +140,6 @@ int main(int argc, char* argv[])
                     continue;
                 }
                 evconnlistener_set_error_cb(listener, accept_error_cb);
-                cltopt.maps[i].bev = NULL;
 
                 st_d_print("[USR]创建侦听套接字 %d:%d OK", 
                                cltopt.maps[i].usrport, cltopt.maps[i].daemonport); 
@@ -152,7 +150,7 @@ int main(int argc, char* argv[])
     }
     
 
-    sc_set_eventcb_srv(srv_fd, base);
+    sc_set_eventcb_srv(srv_fd, base); 
 
     /**
      * Main Loop Here

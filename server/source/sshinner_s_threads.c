@@ -38,55 +38,6 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
-
-        /**
-         * 断开连接的时候拆除连接
-         */
-        if (ptr)
-        {
-            p_item = (P_ACTIV_ITEM)ptr;
-
-            if (p_item->bev_daemon == bev) 
-            {
-                st_d_print("Daemon端断开连接！");
-                if (p_item->bev_usr) 
-                {
-                    st_d_print("拆除Usr端！");
-                    bufferevent_free(p_item->bev_usr); 
-                }
-                bufferevent_free(p_item->bev_daemon); 
-                p_item->bev_daemon = NULL;
-                p_item->bev_usr = NULL; 
-
-            }
-            // USR端主动断开后，Daemon端检测到断开消息后，会自动重连服务
-            else if (p_item->bev_usr == bev) 
-            {
-                st_d_print("Usr端断开连接！");
-                if (p_item->bev_daemon) 
-                {
-                    bufferevent_free(p_item->bev_daemon); 
-                    st_d_print("拆除Daemon端！");
-                }
-                bufferevent_free(p_item->bev_usr); 
-                p_item->bev_daemon = NULL;
-                p_item->bev_usr = NULL; 
-            }
-            else
-            {
-                SYS_ABORT("请检查BEV！！！");
-            }
-
-            /**
-             * 清除这个链接
-             */
-            P_THREAD_OBJ p_threadobj = ss_get_threadobj(p_item->mach_uuid);
-            ss_activ_item_remove(&srvopt, p_threadobj, p_item);
-        }
-        else
-        {
-            bufferevent_free(bev);
-        }
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
@@ -122,109 +73,31 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
  */
 void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
-    size_t n = 0;
-    PKG_HEAD head;
-    RET_T  ret;
+    P_TRANS_ITEM p_trans = (P_TRANS_ITEM)ptr; 
 
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
-    if ( evbuffer_remove(input, &head, HEAD_LEN) != HEAD_LEN )
+    if (bev == p_trans->bev_u && p_trans->bev_d) 
     {
-        st_d_print("读取数据包头%d错误!", HEAD_LEN);
-        return;
+        bufferevent_write_buffer(p_trans->bev_d, bufferevent_get_input(bev));
     }
-
-    if (head.type == 'C') 
+    else if (bev == p_trans->bev_d && p_trans->bev_u) 
     {
-        void *dat = NULL;
-        if (head.dat_len > 0) 
-        {       
-            if (!(dat = malloc(head.dat_len)) )
-            {
-                st_d_error("分配内存[%d]失败！", head.dat_len); 
-                return;
-            }
-            
-            memset(dat, 0, head.dat_len);
-            size_t offset = 0;
-            while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
-            {
-                if (n < (head.dat_len-offset)) 
-                {
-                    offset += n;
-                    continue;
-                }
-                else
-                break;
-            }
-
-            ulong crc = crc32(0L, dat, head.dat_len);
-            if (crc != head.crc) 
-            {
-                st_d_error("数据包校验失败: %lu-%lu", crc, head.crc); 
-                st_d_print("=>%s", (char*) dat);
-                free(dat);
-                return;
-            }
-        }
-        ret = ss_handle_ctl(bev, &head, (char *)dat);
-        if (ret == RET_NO)
-            ss_ret_cmd_err(bev, head.mach_uuid, 
-                           head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
-        free(dat);
-    }
-    else if (head.type == 'D')
-    {
-        ret = ss_handle_dat(bev, &head);
-        if (ret == RET_NO)
-            ss_ret_dat_err(bev, head.mach_uuid, 
-                           head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
+        bufferevent_write_buffer(p_trans->bev_u, bufferevent_get_input(bev));
     }
     else
     {
-        SYS_ABORT("非法数据包类型： %c！", head.type); 
+        SYS_ABORT("WRRRRRR!");
     }
 
     return;
 }
 
 
-static RET_T ss_handle_ctl(struct bufferevent *bev, 
-                           P_PKG_HEAD p_head, char* dat)
-{
-    P_ACTIV_ITEM p_activ_item = NULL;
-    P_THREAD_OBJ p_threadobj = ss_get_threadobj(p_head->mach_uuid); 
-
-    p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid);
-    if (!p_activ_item)
-    {
-        st_d_error("会话UUID %s未找到！", SD_ID128_CONST_STR(p_head->mach_uuid));
-        return RET_NO;
-    }
-
-
-    // USR->DAEMON
-    if (p_head->direct == USR_DAEMON) 
-    {
-        if (p_head->ext == HD_EXT_TRIGGER) 
-        {
-            bufferevent_write(p_activ_item->bev_daemon, 
-                              p_head, HEAD_LEN);
-        }
-        return RET_YES; 
-    }
-    // DAEMON->USR
-    else if (p_head->direct == DAEMON_USR) 
-    {
-        
-        return RET_YES;
-    }
-}
-
 
 static RET_T ss_handle_dat(struct bufferevent *bev,
-                           P_PKG_HEAD p_head)
+                           P_CTL_HEAD p_head)
 {
     char h_buff[4096];  /*libevent底层一次也就读取这么多*/
     size_t n = 0;
@@ -237,54 +110,6 @@ static RET_T ss_handle_dat(struct bufferevent *bev,
     {
         st_d_error("会话UUID %s未找到！", SD_ID128_CONST_STR(p_head->mach_uuid));
         return RET_NO;
-    }
-
-    memset(h_buff, 0, sizeof(h_buff));
-    memcpy(h_buff, p_head, HEAD_LEN);
-
-     // USR->DAEMON
-    if (p_head->direct == USR_DAEMON) 
-    {
-        if (bev != p_activ_item->bev_usr ||
-            !p_activ_item->bev_daemon) 
-        {
-            st_d_error("BEV检查出错！");
-            return RET_NO;
-        }
-
-        if(bufferevent_read(bev, GET_PKG_BODY(h_buff), p_head->dat_len) == p_head->dat_len)
-        {
-            bufferevent_write(p_activ_item->bev_daemon, 
-                                h_buff, HEAD_LEN + p_head->dat_len);
-            st_d_print("TRANSFORM FROM USR->DAEMON %d bytes", p_head->dat_len); 
-        }
-        else
-        {
-            st_d_error("读取Usr端数据负载失败！");
-            return RET_NO;
-        }
-
-    }
-    else if (p_head->direct == DAEMON_USR) 
-    {
-        if (bev != p_activ_item->bev_daemon ||
-            !p_activ_item->bev_usr) 
-        {
-            st_d_error("BEV检查出错！");
-            return RET_NO;
-        }
-
-        if(bufferevent_read(bev, GET_PKG_BODY(h_buff), p_head->dat_len) == p_head->dat_len)
-        {
-            bufferevent_write(p_activ_item->bev_usr, 
-                                h_buff, HEAD_LEN + p_head->dat_len);
-            st_d_print("TRANSFORM FROM DAEMON->USR %d bytes", p_head->dat_len); 
-        }
-        else
-        {
-            st_d_error("读取Daemon端数据负载失败！");
-            return RET_NO;
-        }
     }
 
     return RET_YES;
@@ -382,7 +207,7 @@ static void *thread_run(void *arg)
 static void thread_process(int fd, short which, void *arg) 
 {
     P_THREAD_OBJ p_threadobj = (P_THREAD_OBJ)arg; 
-    P_ACTIV_ITEM p_activ_item = NULL;
+    P_TRANS_ITEM p_trans = NULL;
     P_SLIST_HEAD p_list = NULL;
     P_C_ITEM p_c_item = NULL;
     struct bufferevent *new_bev = NULL;
@@ -411,17 +236,14 @@ static void thread_process(int fd, short which, void *arg)
             }
 
 
-            p_activ_item = (P_ACTIV_ITEM)p_c_item->arg.ptr;
+            p_trans = (P_TRANS_ITEM)p_c_item->arg.ptr; 
 
             new_bev = 
-                bufferevent_socket_new(p_activ_item->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE);
-            bufferevent_setcb(new_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_activ_item);
+                bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
+            bufferevent_setcb(new_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_trans);
             bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
-            p_activ_item->bev_daemon = new_bev;
-
-            //　回复DAEMON OK
-            ss_ret_cmd_ok(new_bev, p_activ_item->mach_uuid, USR_DAEMON);
+            p_trans->bev_d = new_bev;
             free(p_c_item);
 
             break;
@@ -440,19 +262,14 @@ static void thread_process(int fd, short which, void *arg)
                 SYS_ABORT("数据流向错误！！！");
             }
 
-
-            p_activ_item = (P_ACTIV_ITEM)p_c_item->arg.ptr;
-
+            p_trans = (P_TRANS_ITEM)p_c_item->arg.ptr; 
 
             new_bev = 
-                bufferevent_socket_new(p_activ_item->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE);
-            bufferevent_setcb(new_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_activ_item);
+                bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
+            bufferevent_setcb(new_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_trans);
             bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
-            p_activ_item->bev_usr = new_bev;
-
-            //　回复USR OK
-            ss_ret_cmd_ok(new_bev, p_activ_item->mach_uuid, DAEMON_USR);
+            p_trans->bev_u = new_bev;
             free(p_c_item);
 
             break;

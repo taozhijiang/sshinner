@@ -27,24 +27,30 @@
 #include "st_slist.h"
 #include "sshinner.h"
 
+#define MAX_TRANS_NUM   10
+
+typedef struct _trans_item {
+    unsigned short usr_lport;       //USR本地连接的端口，作为标示
+    struct bufferevent *bev_u;
+    struct bufferevent *bev_d;
+} TRANS_ITEM, *P_TRANS_ITEM;
 
 typedef struct _activ_item {
     SLIST_HEAD         list;
     struct rb_node     node;
     struct event_base  *base;
     sd_id128_t         mach_uuid;   // DEAMON机器的会话ID
-    struct bufferevent *bev_daemon;
+    struct bufferevent *bev_daemon; // 控制信息传输通道
     struct bufferevent *bev_usr;
+    TRANS_ITEM          trans[MAX_TRANS_NUM];
     unsigned long       pkg_cnt;    // 转发的数据包计数
-    unsigned int        daemon_ttl; // 看门狗，存活的时间　５次
-    unsigned int        usr_ttl;    // 看门狗
 } ACTIV_ITEM, *P_ACTIV_ITEM;
 
 typedef struct _acct_item {
     char username   [128];      //
     unsigned long   userid;
     SLIST_HEAD      list;       //自身链表
-    SLIST_HEAD      items;      //activ会话链表头
+    SLIST_HEAD      items;    
 } ACCT_ITEM, *P_ACCT_ITEM;
 
 /* A connection queue. */
@@ -105,8 +111,10 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
 void main_bufferread_cb(struct bufferevent *bev, void *ptr);
 void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
-static RET_T ss_main_handle_ctl(struct bufferevent *bev, 
-                           P_PKG_HEAD p_head, char* dat);
+static RET_T ss_main_handle_init(struct bufferevent *bev, 
+                           P_CTL_HEAD p_head, char* dat);
+static RET_T ss_main_handle_ctl(struct bufferevent *bev, P_CTL_HEAD p_head);
+
 
 /**
  * 数据转发和处理类函数
@@ -114,11 +122,6 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
 extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads);
 extern void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 extern void thread_bufferread_cb(struct bufferevent *bev, void *ptr);
-static RET_T ss_handle_ctl(struct bufferevent *bev, 
-                           P_PKG_HEAD p_head, char* dat);
-static RET_T ss_handle_dat(struct bufferevent *bev,
-                           P_PKG_HEAD p_head);
-
 /* 简易从服务器发送控制信息 */
 extern void ss_ret_cmd_ok(struct bufferevent *bev,
                           sd_id128_t uuid, enum DIREC direct);

@@ -45,7 +45,6 @@ extern P_ACTIV_ITEM ss_uuid_search(struct rb_root *root, sd_id128_t uuid)
     return NULL;
 }
 
-
 extern RET_T ss_uuid_insert(struct rb_root *root, P_ACTIV_ITEM data)
 {
     struct rb_node **new = &(root->rb_node), *parent = NULL;
@@ -142,10 +141,8 @@ extern RET_T ss_acct_remove(P_SRV_OPT p_srvopt, P_ACCT_ITEM p_item)
             free(p_acct_item);
             ret = RET_YES;
             break;
-        }
+        }   
     }
 
     return ret;
 }
-
-

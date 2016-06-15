@@ -10,31 +10,29 @@
 enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
 };
 
-#define HD_EXT_TRIGGER   'T'
-#define HD_EXT_TERMINATE 'Z'
-#define HD_EXT_OK        'O'
-#define HD_EXT_ERROR     'E'
-#define HD_EXT_KEEP      'K'
-#define HD_EXT_DAT_ERROR 'D'
+#define HD_CMD_INIT      'I'   /*最初认证时候，包含数据体*/
+#define HD_CMD_CONN      'C'   /*客户端USR请求连接*/
+#define HD_CMD_TRIGGER   'T'
+#define HD_CMD_OK        'O'
+#define HD_CMD_ERROR     'E'
 
 /**
  * 简单数据类型，可以直接赋值或者拷贝
  */
-typedef struct _pkg_head {
-     char type;                 // 'C'/'D'
-     enum DIREC direct;         // 1: USR->DAEMON, 2: DAEMON->USR
-     char ext;                  // 对于'C'类型额外的参数可用　'O'->OK 'E'->Error 'K'->心跳包
-     sd_id128_t mach_uuid;
+typedef struct _ctl_head {
+     enum DIREC    direct;         // 1: USR->DAEMON, 2: DAEMON->USR
+     char          cmd;            
+     ulong          extra_param;     // 额外的参数
+     sd_id128_t     mach_uuid;
      unsigned short daemonport;
      unsigned short usrport;   
-     ulong    crc;
-     unsigned int   dat_len;    //实际的负载长度
- } PKG_HEAD, *P_PKG_HEAD;
+     ulong          crc;            //数据负载，如果dat_len=0就为0
+     unsigned int  dat_len;        //可选择项目，如果没有数据就为0
+ } CTL_HEAD, *P_CTL_HEAD;
+static const int CTL_HEAD_LEN = sizeof(CTL_HEAD);
+#define GET_CTL_HEAD(buf) ((P_CTL_HEAD)buf)
+#define GET_CTL_BODY(buf) ((void*)((char*)buf)+CTL_HEAD_LEN)
 
-static const int HEAD_LEN = sizeof(PKG_HEAD);
-
-#define GET_PKG_HEAD(buf) ((P_PKG_HEAD)buf)
-#define GET_PKG_BODY(buf) ((void*)((char*)buf)+HEAD_LEN)
 
 #include <systemd/sd-id128.h> 
 static const int MACH_UUID_LEN = sizeof(sd_id128_t);

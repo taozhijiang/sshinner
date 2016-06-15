@@ -111,21 +111,23 @@ void accept_error_cb(struct evconnlistener *listener, void *ctx)
 void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     size_t n = 0;
-    PKG_HEAD head;
+    CTL_HEAD head;
     RET_T  ret;
+    void *dat = NULL;
 
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
 
-    if ( evbuffer_remove(input, &head, HEAD_LEN) != HEAD_LEN)
+    if ( evbuffer_remove(input, &head, CTL_HEAD_LEN) != CTL_HEAD_LEN)
     {
-        st_d_print("读取数据包头%d错误!", HEAD_LEN);
+        st_d_print("读取数据包头%d错误!", CTL_HEAD_LEN);
         return;
     }
 
-    if (head.type == 'C') 
+    if (head.cmd == HD_CMD_INIT) 
     {
-        void *dat = NULL;
+        assert(head.dat_len > 0);
+
         if (head.dat_len > 0) 
         {       
             if (!(dat = malloc(head.dat_len)) )
@@ -156,7 +158,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
                 return;
             }
         }
-        ret = ss_main_handle_ctl(bev, &head, (char *)dat);
+        ret = ss_main_handle_init(bev, &head, (char *)dat);
         if (ret == RET_NO)
             ss_ret_cmd_err(bev, head.mach_uuid, 
                            head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
@@ -164,7 +166,10 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
     }
     else
     {
-        SYS_ABORT("侦听套接字只能处理命令请求：%d", head.type); 
+        ret = ss_main_handle_ctl(bev, &head);
+        if (ret == RET_NO)
+            ss_ret_cmd_err(bev, head.mach_uuid, 
+               head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
     }
 
     return;
@@ -172,8 +177,8 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 
 
 
-static RET_T ss_main_handle_ctl(struct bufferevent *bev, 
-                           P_PKG_HEAD p_head, char* dat)
+static RET_T ss_main_handle_init(struct bufferevent *bev, 
+                           P_CTL_HEAD p_head, char* dat)
 {
     json_object *new_obj = NULL;
     json_object *p_store_obj = NULL;
@@ -188,12 +193,18 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
     sd_id128_t      mach_uuid;
     char dec_buf    [4096];
 
-    
+    if (p_head->cmd != HD_CMD_INIT || dat == NULL)
+    {
+        st_d_print("HD_CMD_INIT SHOULD CONTAIN BODY!");
+        return RET_NO;
+    }
+
+
     /*服务器私钥解密数据*/
     memset(dec_buf, 0, sizeof(dec_buf));
     int len = RSA_private_decrypt(p_head->dat_len, dat, dec_buf, 
                        srvopt.p_prikey, RSA_PKCS1_PADDING);
-    if (len < 0 || len > (4096-HEAD_LEN) )
+    if (len < 0 )
     {
         st_d_error("服务端私钥解密数据%d出错！", len);
         return RET_NO;
@@ -210,7 +221,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
     json_fetch_and_copy(new_obj, "username", username, sizeof(username));
     userid = json_object_get_int(json_object_object_get(new_obj,"userid"));
 
-    // USR->DAEMON
+    /* 其实只是检测 */
     if (p_head->direct == USR_DAEMON) 
     {
         json_fetch_and_copy(new_obj, "r_mach_uuid", uuid_s, sizeof(uuid_s));
@@ -238,32 +249,14 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
             goto error_ret;
         }
 
-        bufferevent_free(bev);
-
-        P_C_ITEM p_c = (P_C_ITEM)calloc(sizeof(C_ITEM), 1);
-        if (!p_c)
-        {
-            st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
-            goto error_ret;
-        }
-
-        p_c->direct = p_head->direct;
-        p_c->socket = bufferevent_getfd(bev);
-        p_c->arg.ptr = p_activ_item;
-
-        slist_add(&p_c->list, &p_threadobj->conn_queue);
-        write(p_threadobj->notify_send_fd, "U", 1);
-
-        st_d_print("已将%s:%lu %s加入线程[%lu]处理队列！", username, userid,
-                   SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_threadobj->thread_id); 
-
+        json_object_put(new_obj);
         return RET_YES;
     }
-    // DAEMON->USR
     else if (p_head->direct == DAEMON_USR) 
     {
         p_threadobj = ss_get_threadobj(p_head->mach_uuid);
         p_acct_item = ss_find_acct_item(&srvopt, username, userid);
+
         if (!p_acct_item)
         {
             st_d_print("%s:%lu 用户尚未存在，创建之...", username, userid);
@@ -275,6 +268,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
                 goto error_ret;
             }
 
+            memset(p_acct_item, 0, sizeof(ACCT_ITEM));
             strncpy(p_acct_item->username, username, sizeof(p_acct_item->username));
             p_acct_item->userid = userid;
             slist_init(&p_acct_item->items);
@@ -301,48 +295,112 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         p_activ_item->base = p_threadobj->base; 
         p_activ_item->mach_uuid = p_head->mach_uuid;
 
-        P_C_ITEM p_c = (P_C_ITEM)calloc(sizeof(C_ITEM), 1);
-        if (!p_c)
-        {
-            st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
-            free(p_activ_item);
-            goto error_ret;
-        }
-
-        p_c->direct = p_head->direct;
-        p_c->socket = bufferevent_getfd(bev);
-        p_c->arg.ptr = p_activ_item;
-
-
         slist_add(&p_activ_item->list, &p_acct_item->items);
         ss_uuid_insert(&p_threadobj->uuid_tree, p_activ_item);
 
-        slist_add(&p_c->list, &p_threadobj->conn_queue);
-        write(p_threadobj->notify_send_fd, "D", 1);
-
-#if 0     
-
-        p_acct_item = NULL;
-        p_activ_item = NULL;
-        if (p_acct_item = ss_find_acct_item(&srvopt, username, userid)) 
-        {
-            st_d_print("%s:%lu", p_acct_item->username, p_acct_item->userid); 
-        }
-        if (p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid))
-        {
-            st_d_print("%s", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
-        }
-#endif
-
-
-        st_d_print("已将%s:%lu %s加入线程[%lu]处理队列！", username, userid,
-                   SD_ID128_CONST_STR(p_activ_item->mach_uuid),p_threadobj->thread_id); 
-
+        json_object_put(new_obj);
         return RET_YES;
     }
 
 error_ret:
     json_object_put(new_obj);
+    return RET_NO;
+}
 
+
+static RET_T ss_main_handle_ctl(struct bufferevent *bev, 
+                           P_CTL_HEAD p_head)
+{
+    P_THREAD_OBJ    p_threadobj = NULL;
+    P_ACTIV_ITEM    p_activ_item = NULL;
+    P_TRANS_ITEM    p_trans = NULL;
+
+    p_threadobj  = ss_get_threadobj(p_head->mach_uuid);
+    p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid); 
+
+    if (!p_activ_item)
+    {
+        st_d_print("会话 %s 不存在！", SD_ID128_CONST_STR(p_head->mach_uuid));
+        goto error_ret;
+    }
+
+    /**
+     * 从main中删除event侦听，添加到线程池中
+     */
+    bufferevent_free(bev);
+
+    if (p_head->cmd == HD_CMD_CONN)
+    {
+        p_trans = NULL;
+        int i = 0;
+
+        if (p_head->direct = USR_DAEMON) //寻找空余trans
+        {
+            for (i=0; i < MAX_TRANS_NUM; ++i)
+            {
+                if (p_activ_item->trans[i].usr_lport == 0) 
+                {
+                    p_trans = &p_activ_item->trans[i];
+                    break;
+                }
+            }
+
+            if (!p_trans)
+            {
+                st_d_error("TRANS队列已满！");
+                return RET_NO;
+            }
+            p_trans->usr_lport = p_head->extra_param;
+            p_trans->bev_d = NULL;
+            p_trans->bev_u = bev;
+
+            /** 
+             * 转发包到DAEMON，促发另外一边的连接 
+             */ 
+            bufferevent_write(p_activ_item->bev_daemon, p_head, CTL_HEAD_LEN);
+
+        }
+        else
+        {
+            for (i=0; i < MAX_TRANS_NUM; ++i)
+            {
+                if (p_activ_item->trans[i].usr_lport == p_head->extra_param) 
+                {
+                    p_trans = &p_activ_item->trans[i];
+                    break;
+                }
+            }
+
+            if (!p_trans)
+            {
+                st_d_error("TRANS->%d未找到！", p_head->extra_param); 
+                return RET_NO;
+            }
+            assert(p_trans->bev_u);
+            p_trans->bev_d = bev;
+        }
+
+    }
+
+    P_C_ITEM p_c = (P_C_ITEM)calloc(sizeof(C_ITEM), 1);
+    if (!p_c)
+    {
+        st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
+        goto error_ret;
+    }
+
+    p_c->direct = p_head->direct;
+    p_c->socket = bufferevent_getfd(bev);
+    p_c->arg.ptr = p_trans;
+
+    slist_add(&p_c->list, &p_threadobj->conn_queue);
+    write(p_threadobj->notify_send_fd, "U", 1);
+
+    st_d_print("已将CONN %s加入线程[%lu]处理队列！", 
+               SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_threadobj->thread_id); 
+
+    return RET_YES;
+
+error_ret:
     return RET_NO;
 }

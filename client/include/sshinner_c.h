@@ -27,31 +27,43 @@ enum CLT_TYPE {
     C_DAEMON, C_USR,
 };
 
-
+/**
+ * 采用本地和服务器数据直接单独连接
+ */
+// 启动时候加载的端口映射
 typedef struct _portmap {
     unsigned short usrport;
     unsigned short daemonport;
-    struct bufferevent *bev;
 } PORTMAP, *P_PORTMAP;
 
+// 实际传输时候的端口和bufferevent，为动态创建，动态关闭的
+typedef struct _porttrans {
+    unsigned short usrport;
+    unsigned short daemonport;
+    unsigned short l_port;      //本地实际传输的端口
+    struct bufferevent *local_bev;
+    struct bufferevent *srv_bev;
+} PORTTRANS, *P_PORTTRANS;
 
-#define MAX_PORTMAP_NUM 10
+// 目前硬编码了，实际在服务端是链表没有限制的
+#define MAX_PORT_NUM 10
 
 
 static const char* PUBLIC_KEY_FILE = "./ssl/public.key";
 
 typedef struct _clt_opt
 {
-    enum CLT_TYPE       C_TYPE;
-    sd_id128_t          mach_uuid;
+    enum CLT_TYPE     C_TYPE;    //DAEMON/USR
+    sd_id128_t         mach_uuid;
     char hostname[128];
     char username[128];  
-    unsigned long   userid;
-    struct sockaddr_in  srv;
-    struct bufferevent *srv_bev;
+    unsigned long     userid;
+    struct sockaddr_in srv;
+    struct bufferevent *srv_bev;    //主要是控制信息通信
 
-    sd_id128_t      session_uuid;
-    PORTMAP         maps[MAX_PORTMAP_NUM];
+    sd_id128_t          session_uuid;
+    PORTMAP             maps[MAX_PORT_NUM];
+    PORTTRANS           trans[MAX_PORT_NUM];
 }CLT_OPT, *P_CLT_OPT;
 
 
@@ -82,8 +94,11 @@ void bufferread_cb(struct bufferevent *bev, void *ptr);
  * 客户端与SRV的通信
  */
 RET_T sc_connect_srv(int srv_fd);
-RET_T sc_daemon_connect_srv(int srv_fd);
-RET_T sc_usr_connect_srv(int srv_fd);
+RET_T sc_daemon_init_srv(int srv_fd);
+RET_T sc_usr_init_srv(int srv_fd);
+
+RET_T sc_send_head_cmd(int cmd, unsigned long extra_param, 
+                        unsigned short usrport, unsigned daemonport);
 void sc_set_eventcb_srv(int srv_fd, struct event_base *base);
 
 void srv_bufferread_cb(struct bufferevent *bev, void *ptr);
