@@ -17,7 +17,6 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 {
     size_t n = 0;
     CTL_HEAD head;
-    P_PORTMAP p_map = NULL;
 
     struct evbuffer *input = bufferevent_get_input(bev);
     struct evbuffer *output = bufferevent_get_output(bev);
@@ -95,8 +94,6 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
                 st_d_error("连接服务器失败！");
                 return;
             }
-            sc_send_head_cmd(HD_CMD_CONN, head.extra_param, head.usrport,
-                             head.daemonport);
 
 
             struct event_base *base = bufferevent_get_base(bev);
@@ -104,7 +101,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
             evutil_make_socket_nonblocking(local_fd);
             struct bufferevent *local_bev = 
                 bufferevent_socket_new(base, local_fd, BEV_OPT_CLOSE_ON_FREE);
-            bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_map);
+            bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
             bufferevent_enable(local_bev, EV_READ|EV_WRITE);
 
             evutil_make_socket_nonblocking(srv_fd); 
@@ -119,6 +116,20 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
             p_trans->l_port = head.extra_param;
             p_trans->local_bev = local_bev;
             p_trans->srv_bev = srv_bev;
+
+            /* 向服务器报告连接请求 */
+            //　必须要发送CONN包，触发这个连接转移到线程池处理  
+                /* 向服务器报告连接请求 */
+            CTL_HEAD ret_head;
+            memset(&ret_head, 0, CTL_HEAD_LEN);
+            ret_head.cmd = HD_CMD_CONN;
+            ret_head.daemonport = p_trans->daemonport;
+            ret_head.usrport = p_trans->usrport;
+            ret_head.extra_param = p_trans->l_port; 
+            ret_head.mach_uuid = cltopt.session_uuid;
+            ret_head.direct = DAEMON_USR; 
+
+            bufferevent_write(srv_bev, &ret_head, CTL_HEAD_LEN);
 
             st_d_print("DAEMON端准备OK!");
         }
@@ -290,7 +301,7 @@ void accept_conn_cb(struct evconnlistener *listener,
 
     struct bufferevent *srv_bev = 
         bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
-    bufferevent_setcb(srv_bev, srv_bufferread_cb, NULL, srv_bufferevent_cb, p_trans);
+    bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
     bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
     p_trans->usrport = p_map->usrport;
@@ -299,16 +310,16 @@ void accept_conn_cb(struct evconnlistener *listener,
     p_trans->srv_bev = srv_bev;
 
     /* 向服务器报告连接请求 */
-    CTL_HEAD head;
-    memset(&head, 0, CTL_HEAD_LEN);
-    head.cmd = HD_CMD_CONN;
-    head.daemonport = p_map->daemonport;
-    head.usrport = p_map->usrport;
-    head.extra_param = atoi(sbuf);
-    head.mach_uuid = cltopt.session_uuid;
-    head.direct = USR_DAEMON;
+    CTL_HEAD ret_head;
+    memset(&ret_head, 0, CTL_HEAD_LEN);
+    ret_head.cmd = HD_CMD_CONN;
+    ret_head.daemonport = p_map->daemonport;
+    ret_head.usrport = p_map->usrport;
+    ret_head.extra_param = atoi(sbuf);
+    ret_head.mach_uuid = cltopt.session_uuid;
+    ret_head.direct = USR_DAEMON;
 
-    bufferevent_write(srv_bev, &head, CTL_HEAD_LEN);
+    bufferevent_write(srv_bev, &ret_head, CTL_HEAD_LEN);
 
     st_d_print("客户端创建BEV OK！");
 

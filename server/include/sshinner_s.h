@@ -57,7 +57,6 @@ typedef struct _acct_item {
 typedef struct conn_item {
     SLIST_HEAD      list;
     int             socket;
-    enum DIREC      direct;
     union {
         unsigned long dat;
         void*         ptr;
@@ -114,7 +113,8 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 static RET_T ss_main_handle_init(struct bufferevent *bev, 
                            P_CTL_HEAD p_head, char* dat);
 static RET_T ss_main_handle_ctl(struct bufferevent *bev, P_CTL_HEAD p_head);
-
+RET_T sc_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,
+                       int cmd, enum DIREC direct, unsigned long extra_param);
 
 /**
  * 数据转发和处理类函数
@@ -123,6 +123,8 @@ extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads);
 extern void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 extern void thread_bufferread_cb(struct bufferevent *bev, void *ptr);
 /* 简易从服务器发送控制信息 */
+
+
 extern void ss_ret_cmd_ok(struct bufferevent *bev,
                           sd_id128_t uuid, enum DIREC direct);
 extern void ss_ret_cmd_err(struct bufferevent *bev,

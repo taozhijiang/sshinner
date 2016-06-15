@@ -96,3 +96,30 @@ extern void ss_ret_cmd_err(struct bufferevent *bev,
     return;
 }
 
+
+/**
+ * 没有消息负载的发送
+ */
+RET_T sc_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,
+                       int cmd, enum DIREC direct, unsigned long extra_param)
+{
+    CTL_HEAD head;
+    memset(&head, 0, CTL_HEAD_LEN);
+
+    if (bev == NULL) 
+    {
+        st_d_error("bev == NULL");
+        return RET_NO;
+    }
+
+    head.direct = direct;
+    head.cmd = cmd;
+    head.extra_param = extra_param;
+    head.mach_uuid = p_head->mach_uuid; 
+    head.usrport = p_head->usrport;
+    head.daemonport = p_head->daemonport;
+
+    bufferevent_write(bev, &head, CTL_HEAD_LEN);
+
+    return RET_YES;
+}

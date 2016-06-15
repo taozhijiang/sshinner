@@ -80,10 +80,12 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
 
     if (bev == p_trans->bev_u && p_trans->bev_d) 
     {
+        st_d_print("转发数据包USR->DAEMON");
         bufferevent_write_buffer(p_trans->bev_d, bufferevent_get_input(bev));
     }
     else if (bev == p_trans->bev_d && p_trans->bev_u) 
     {
+        st_d_print("转发数据包DAEMON->USR");
         bufferevent_write_buffer(p_trans->bev_u, bufferevent_get_input(bev));
     }
     else
@@ -94,26 +96,6 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
     return;
 }
 
-
-
-static RET_T ss_handle_dat(struct bufferevent *bev,
-                           P_CTL_HEAD p_head)
-{
-    char h_buff[4096];  /*libevent底层一次也就读取这么多*/
-    size_t n = 0;
-    P_ACTIV_ITEM p_activ_item = NULL;
-
-    P_THREAD_OBJ p_threadobj = ss_get_threadobj(p_head->mach_uuid); 
-
-    p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid);
-    if (!p_activ_item)
-    {
-        st_d_error("会话UUID %s未找到！", SD_ID128_CONST_STR(p_head->mach_uuid));
-        return RET_NO;
-    }
-
-    return RET_YES;
-}
 
 static void *thread_run(void *arg);
 static void thread_process(int fd, short which, void *arg);
@@ -221,7 +203,7 @@ static void thread_process(int fd, short which, void *arg)
 
     switch (buf[0]) 
     {
-        case 'D':
+        case 'D':   // DAEMON->USR
             p_list = slist_fetch(&p_threadobj->conn_queue);
             if (!p_list)
             {
@@ -230,12 +212,6 @@ static void thread_process(int fd, short which, void *arg)
             }
 
             p_c_item = list_entry(p_list, C_ITEM, list);
-            if (p_c_item->direct != DAEMON_USR) 
-            {
-                SYS_ABORT("数据流向错误！！！");
-            }
-
-
             p_trans = (P_TRANS_ITEM)p_c_item->arg.ptr; 
 
             new_bev = 
@@ -246,9 +222,11 @@ static void thread_process(int fd, short which, void *arg)
             p_trans->bev_d = new_bev;
             free(p_c_item);
 
+            st_d_print("WORKTHREAD-> DAEMON_USR(%d) OK!", p_trans->usr_lport); 
+
             break;
 
-        case 'U':
+        case 'U':   //USR->DAEMON
             p_list = slist_fetch(&p_threadobj->conn_queue);
             if (!p_list)
             {
@@ -257,11 +235,6 @@ static void thread_process(int fd, short which, void *arg)
             }
 
             p_c_item = list_entry(p_list, C_ITEM, list);
-            if (p_c_item->direct != USR_DAEMON) 
-            {
-                SYS_ABORT("数据流向错误！！！");
-            }
-
             p_trans = (P_TRANS_ITEM)p_c_item->arg.ptr; 
 
             new_bev = 
@@ -271,6 +244,8 @@ static void thread_process(int fd, short which, void *arg)
 
             p_trans->bev_u = new_bev;
             free(p_c_item);
+
+            st_d_print("WORKTHREAD-> USR_DAEMON(%d) OK!", p_trans->usr_lport); 
 
             break;
     }

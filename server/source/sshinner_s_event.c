@@ -249,6 +249,14 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
             goto error_ret;
         }
 
+        p_activ_item->bev_usr = bev;
+
+        /**
+         * 向客户端返回OK
+         */
+        st_d_print("检查会话OK: %s", SD_ID128_CONST_STR(p_head->mach_uuid));
+        sc_send_head_cmd(bev, p_head, HD_CMD_OK, DAEMON_USR, p_head->extra_param);
+
         json_object_put(new_obj);
         return RET_YES;
     }
@@ -290,13 +298,16 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
            goto error_ret;
         }
 
-        bufferevent_free(bev);
-
         p_activ_item->base = p_threadobj->base; 
         p_activ_item->mach_uuid = p_head->mach_uuid;
 
         slist_add(&p_activ_item->list, &p_acct_item->items);
         ss_uuid_insert(&p_threadobj->uuid_tree, p_activ_item);
+
+        p_activ_item->bev_daemon = bev;
+
+        st_d_print("创建会话OK: %s", SD_ID128_CONST_STR(p_head->mach_uuid));
+        sc_send_head_cmd(bev, p_head, HD_CMD_OK, USR_DAEMON, p_head->extra_param); 
 
         json_object_put(new_obj);
         return RET_YES;
@@ -324,17 +335,18 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         goto error_ret;
     }
 
-    /**
-     * 从main中删除event侦听，添加到线程池中
-     */
-    bufferevent_free(bev);
-
     if (p_head->cmd == HD_CMD_CONN)
     {
+        /**
+         * 从main中删除event侦听，添加到线程池中
+         */
+        st_d_print("从main中删除bufferevent事件！");
+        bufferevent_free(bev);
+
         p_trans = NULL;
         int i = 0;
 
-        if (p_head->direct = USR_DAEMON) //寻找空余trans
+        if (p_head->direct == USR_DAEMON) //寻找空余trans
         {
             for (i=0; i < MAX_TRANS_NUM; ++i)
             {
@@ -351,12 +363,11 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
                 return RET_NO;
             }
             p_trans->usr_lport = p_head->extra_param;
-            p_trans->bev_d = NULL;
-            p_trans->bev_u = bev;
 
             /** 
              * 转发包到DAEMON，促发另外一边的连接 
              */ 
+            st_d_print("触发DAEMON端事件！");
             bufferevent_write(p_activ_item->bev_daemon, p_head, CTL_HEAD_LEN);
 
         }
@@ -376,8 +387,6 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
                 st_d_error("TRANS->%d未找到！", p_head->extra_param); 
                 return RET_NO;
             }
-            assert(p_trans->bev_u);
-            p_trans->bev_d = bev;
         }
 
     }
@@ -389,12 +398,15 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         goto error_ret;
     }
 
-    p_c->direct = p_head->direct;
     p_c->socket = bufferevent_getfd(bev);
     p_c->arg.ptr = p_trans;
 
     slist_add(&p_c->list, &p_threadobj->conn_queue);
-    write(p_threadobj->notify_send_fd, "U", 1);
+
+    if (p_head->direct == USR_DAEMON)
+        write(p_threadobj->notify_send_fd, "U", 1);
+    else
+        write(p_threadobj->notify_send_fd, "D", 1);
 
     st_d_print("已将CONN %s加入线程[%lu]处理队列！", 
                SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_threadobj->thread_id); 
