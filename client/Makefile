@@ -38,7 +38,7 @@ all : $(PACKAGE)
 
 $(PACKAGE) : $(objs)
 	$(CC) -c $(CCFLAGS) $(EXTRAFLAGS) $(SUBDIRS)/client.c -o $(OBJDIR)/client.o
-	$(CC) $(CCFLAGS) $(EXTRAFLAGS) $(objs) $(OBJDIR)/client.o -o $(TARGET_DIR)/$(PACKAGE)
+	$(CC) $(CCFLAGS) $(objs) $(OBJDIR)/client.o $(EXTRAFLAGS) -o $(TARGET_DIR)/$(PACKAGE)
 
 $(objs) : $(OBJDIR)/%.o: %.c
 	@mkdir -p $(OBJDIR)

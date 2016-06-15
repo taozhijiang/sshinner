@@ -38,7 +38,7 @@ all : $(PACKAGE)
 
 $(PACKAGE) : $(objs)
 	$(CC) -c $(CCFLAGS) $(EXTRAFLAGS) $(SUBDIRS)/server.c -o $(OBJDIR)/server.o
-	$(CC) $(CCFLAGS) $(EXTRAFLAGS) $(objs) $(OBJDIR)/server.o -o $(TARGET_DIR)/$(PACKAGE)
+	$(CC) $(CCFLAGS) $(objs) $(OBJDIR)/server.o $(EXTRAFLAGS) -o $(TARGET_DIR)/$(PACKAGE)
 
 $(objs) : $(OBJDIR)/%.o: %.c
 	@mkdir -p $(OBJDIR)
