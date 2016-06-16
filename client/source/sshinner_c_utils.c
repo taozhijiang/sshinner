@@ -172,6 +172,23 @@ P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit)
     return p_map;
 }
 
+P_PORTMAP sc_find_trans(unsigned short l_sock)
+{
+    P_PORTTRANS p_trans = NULL;
+
+    int i = 0;
+    for (i=0; i < MAX_PORT_NUM; ++i)
+    {
+        if (cltopt.trans[i].l_port == l_sock) 
+        {
+            p_trans = &cltopt.trans[i];
+            break;
+        }
+    }
+
+    return p_trans;
+}
+
 RET_T sc_daemon_init_srv(int srv_fd)
 {
     char buff[4096];

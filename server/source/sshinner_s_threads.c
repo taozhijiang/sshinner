@@ -222,7 +222,26 @@ static void thread_process(int fd, short which, void *arg)
             p_trans->bev_d = new_bev;
             free(p_c_item);
 
+            if (p_trans->bev_u == NULL || p_trans->usr_lport == 0 || p_trans->p_activ_item == NULL) 
+            {
+                SYS_ABORT("USR SIDE SHOULD BE OK ALREAY!!!");
+            }
+
             st_d_print("WORKTHREAD-> DAEMON_USR(%d) OK!", p_trans->usr_lport); 
+
+            st_d_print("Trigger CONN");
+
+            CTL_HEAD head;
+            memset(&head, 0, CTL_HEAD_LEN);
+            head.direct = USR_DAEMON; 
+            head.cmd = HD_CMD_CONN_ACT; 
+            head.extra_param = p_trans->usr_lport; 
+            head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
+            //head.usrport = p_trans->p_activ_item->usrport;
+            //head.daemonport = p_trans->p_activ_item->daemonport;
+            bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
+            head.direct = DAEMON_USR; 
+            bufferevent_write(p_trans->p_activ_item->bev_usr, &head, CTL_HEAD_LEN); 
 
             break;
 

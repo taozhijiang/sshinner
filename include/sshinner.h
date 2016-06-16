@@ -12,7 +12,8 @@ enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
 
 #define HD_CMD_INIT      'I'   /*最初认证时候，包含数据体*/
 #define HD_CMD_CONN      'C'   /*客户端USR请求连接*/
-#define HD_CMD_TRIGGER   'T'
+#define HD_CMD_CONN_ACT  'A'
+
 #define HD_CMD_OK        'O'
 #define HD_CMD_ERROR     'E'
 

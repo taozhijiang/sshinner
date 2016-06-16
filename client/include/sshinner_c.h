@@ -106,5 +106,6 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
 P_PORTMAP sc_find_usr_portmap(unsigned short usrport);
 P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit);
+P_PORTMAP sc_find_trans(unsigned short l_sock);
 
 #endif

@@ -362,6 +362,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
                 st_d_error("TRANS队列已满！");
                 return RET_NO;
             }
+            p_trans->p_activ_item = p_activ_item;
             p_trans->usr_lport = p_head->extra_param;
 
             /** 

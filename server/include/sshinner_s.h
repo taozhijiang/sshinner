@@ -29,7 +29,9 @@
 
 #define MAX_TRANS_NUM   10
 
+struct _activ_item;
 typedef struct _trans_item {
+    struct _activ_item*   p_activ_item;
     unsigned short usr_lport;       //USR本地连接的端口，作为标示
     struct bufferevent *bev_u;
     struct bufferevent *bev_d;

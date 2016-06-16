@@ -39,22 +39,25 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         exit(EXIT_SUCCESS);
     }
 
+    if (head.cmd == HD_CMD_CONN_ACT)
+    {
+        P_PORTTRANS p_trans = sc_find_trans(head.extra_param); 
+        if (!p_trans) 
+        {
+            SYS_ABORT("Active unknow conn! %d", head.extra_param);
+        }
+
+        bufferevent_enable(p_trans->local_bev, EV_READ|EV_WRITE);
+        bufferevent_enable(p_trans->srv_bev, EV_READ|EV_WRITE); 
+    }
+
     if (head.cmd == HD_CMD_CONN) 
     {
         assert(cltopt.C_TYPE == C_DAEMON);
         if (cltopt.C_TYPE == C_DAEMON) 
         {
             sc_find_daemon_portmap(head.daemonport, 1);
-            P_PORTTRANS p_trans = NULL;
-            int i = 0;
-            for (i=0; i < MAX_PORT_NUM; ++i)
-            {
-                if (cltopt.trans[i].l_port == 0) 
-                {
-                    p_trans = &cltopt.trans[i];
-                    break;
-                }
-            }
+            P_PORTTRANS p_trans = sc_find_trans(0);
             
             if (!p_trans)
             {
@@ -102,13 +105,13 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
             struct bufferevent *local_bev = 
                 bufferevent_socket_new(base, local_fd, BEV_OPT_CLOSE_ON_FREE);
             bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
-            bufferevent_enable(local_bev, EV_READ|EV_WRITE);
+            //bufferevent_enable(local_bev, EV_READ|EV_WRITE);
 
             evutil_make_socket_nonblocking(srv_fd); 
             struct bufferevent *srv_bev = 
                 bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
             bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
-            bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
+            //bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
 
             p_trans->daemonport = head.daemonport;
@@ -276,17 +279,7 @@ void accept_conn_cb(struct evconnlistener *listener,
         return;
     }
 
-    P_PORTTRANS p_trans = NULL;
-
-    int i = 0;
-    for (i=0; i < MAX_PORT_NUM; ++i)
-    {
-        if (cltopt.trans[i].l_port == 0) 
-        {
-            p_trans = &cltopt.trans[i];
-            break;
-        }
-    }
+    P_PORTTRANS p_trans = sc_find_trans(0);
 
     if (!p_trans)
     {
@@ -297,15 +290,16 @@ void accept_conn_cb(struct evconnlistener *listener,
     struct bufferevent *local_bev = 
         bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
     bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
-    bufferevent_enable(local_bev, EV_READ|EV_WRITE);
+    //bufferevent_enable(local_bev, EV_READ|EV_WRITE);
 
     struct bufferevent *srv_bev = 
         bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
     bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
-    bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
+    //bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
     p_trans->usrport = p_map->usrport;
     p_trans->daemonport = p_map->daemonport;
+    p_trans->l_port = atoi(sbuf);
     p_trans->local_bev = local_bev;
     p_trans->srv_bev = srv_bev;
 
