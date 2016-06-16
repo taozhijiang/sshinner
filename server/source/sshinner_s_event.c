@@ -12,8 +12,7 @@
 
 void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
-    P_ACTIV_ITEM p_item = NULL;
-    P_THREAD_OBJ p_threadobj = NULL;
+    P_ACTIV_ITEM p_item = (P_ACTIV_ITEM)ptr;
 
     struct event_base *base = bufferevent_get_base(bev);
     int loop_terminate_flag = 0;
@@ -31,6 +30,42 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
+        
+        // 对于任何一端断开了main_bev，那么服务端会拆除这个activ，
+        // 以及其下面的所有的活动，然后CLT自己选择重新连接
+
+
+        if (p_item)
+        {
+            if (p_item->bev_daemon == bev) 
+            {
+                if (p_item->bev_usr) 
+                {
+                    int l_fd = bufferevent_getfd(p_item->bev_usr);
+                    bufferevent_free(p_item->bev_usr); 
+                    close(l_fd);
+                }
+            }
+            else if (p_item->bev_usr == bev) 
+            {
+                if (p_item->bev_daemon) 
+                {
+                    int l_fd = bufferevent_getfd(p_item->bev_daemon);
+                    bufferevent_free(p_item->bev_daemon); 
+                    close(l_fd);
+                }
+            }
+            else
+            {
+                SYS_ABORT("BEV检测失败@@@@@");
+            }
+
+            st_d_print("释放连接：%s", SD_ID128_CONST_STR(p_item->mach_uuid));
+
+            P_THREAD_OBJ p_threadobj = ss_get_threadobj(p_item->mach_uuid);
+            ss_activ_item_remove(&srvopt, p_threadobj, p_item);
+
+        }
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
@@ -257,6 +292,12 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
         st_d_print("检查会话OK: %s", SD_ID128_CONST_STR(p_head->mach_uuid));
         sc_send_head_cmd(bev, p_head, HD_CMD_OK, DAEMON_USR, p_head->extra_param);
 
+       /**
+         * 这里重新进行一个callback绑定，为的是设定callback的参数
+         */
+        bufferevent_setcb(bev, main_bufferread_cb, NULL, main_bufferevent_cb, p_activ_item); 
+        bufferevent_enable(bev, EV_READ|EV_WRITE);
+
         json_object_put(new_obj);
         return RET_YES;
     }
@@ -308,6 +349,12 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
 
         st_d_print("创建会话OK: %s", SD_ID128_CONST_STR(p_head->mach_uuid));
         sc_send_head_cmd(bev, p_head, HD_CMD_OK, USR_DAEMON, p_head->extra_param); 
+
+       /**
+         * 这里重新进行一个callback绑定，为的是设定callback的参数
+         */
+        bufferevent_setcb(bev, main_bufferread_cb, NULL, main_bufferevent_cb, p_activ_item); 
+        bufferevent_enable(bev, EV_READ|EV_WRITE);
 
         json_object_put(new_obj);
         return RET_YES;

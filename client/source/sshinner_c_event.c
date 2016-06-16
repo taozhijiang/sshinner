@@ -44,11 +44,13 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         P_PORTTRANS p_trans = sc_find_trans(head.extra_param); 
         if (!p_trans) 
         {
-            SYS_ABORT("Active unknow conn! %d", head.extra_param);
+            SYS_ABORT("本地未找到连接信息：%d", head.extra_param);
         }
 
         bufferevent_enable(p_trans->local_bev, EV_READ|EV_WRITE);
         bufferevent_enable(p_trans->srv_bev, EV_READ|EV_WRITE); 
+
+        st_d_print("开始传输数据：%d", head.extra_param); 
     }
 
     if (head.cmd == HD_CMD_CONN) 
@@ -122,7 +124,6 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 
             /* 向服务器报告连接请求 */
             //　必须要发送CONN包，触发这个连接转移到线程池处理  
-                /* 向服务器报告连接请求 */
             CTL_HEAD ret_head;
             memset(&ret_head, 0, CTL_HEAD_LEN);
             ret_head.cmd = HD_CMD_CONN;
@@ -159,6 +160,60 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
+
+        // main_be连接断开，这时候：如果是DAEMON端主动断开，那么USR端也要断开
+        // 否则，就让DAEMON进行重置（重新连接服务器）
+        // 任何情况下，所有的服务都必须断开
+
+        // TODO:
+
+        // BEV_OPT_CLOSE_ON_FREE already closed the socket
+        if (cltopt.C_TYPE == C_USR) 
+        {
+            st_d_print("DAEMON已经退出，本端挂起！");
+            exit(EXIT_SUCCESS);
+        }
+        else
+        {
+            P_PORTTRANS p_trans = NULL;
+
+            int i = 0;
+            for (i=0; i < MAX_PORT_NUM; ++i)
+            {
+                if (cltopt.trans[i].l_port) 
+                {
+                    st_d_print("Freeing: %d", cltopt.trans[i].l_port); 
+                    
+                    cltopt.trans[i].l_port = 0;
+                    if (cltopt.trans[i].local_bev)
+                        bufferevent_free(cltopt.trans[i].local_bev);
+                    if (cltopt.trans[i].srv_bev) 
+                        bufferevent_free(cltopt.trans[i].srv_bev);
+                }
+            }
+
+            st_d_print("DAEMON端重连服务器！");
+
+            int srv_fd;
+            srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+            if (sc_connect_srv(srv_fd) != RET_YES)
+            {
+                st_d_error("连接服务器失败！");
+                event_base_loopexit(base, NULL);
+            }
+
+            if (sc_daemon_init_srv(srv_fd) != RET_YES) 
+            {
+                st_d_error("(DAEMON)服务端返回错误！");
+                event_base_loopexit(base, NULL);
+            }
+       
+            sc_set_eventcb_srv(srv_fd, base);
+            st_d_print("(DAEMON)重连OK！");
+
+        }
+
     }
     /*else if (events & BEV_EVENT_TIMEOUT) 
     {
@@ -190,6 +245,7 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 
 void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
+    P_PORTTRANS p_trans = (P_PORTTRANS)ptr; 
     struct event_base *base = bufferevent_get_base(bev);
 
     //只有使用bufferevent_socket_connect进行的连接才会得到CONNECTED的事件
@@ -207,6 +263,23 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
+
+        // 关闭对端
+        if (p_trans && p_trans->l_port) 
+        {
+            st_d_print("释放[%d]:", p_trans->l_port); 
+            if (p_trans->local_bev)
+                bufferevent_free(p_trans->local_bev);
+            if (p_trans->srv_bev)
+                bufferevent_free(p_trans->srv_bev); 
+        }
+
+        p_trans->local_bev = NULL;
+        p_trans->srv_bev = NULL;
+        p_trans->l_port = 0;
+        p_trans->daemonport = 0;
+        p_trans->usrport = 0;
+
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {

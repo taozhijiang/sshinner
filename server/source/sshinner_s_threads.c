@@ -20,7 +20,7 @@ static pthread_cond_t init_cond;
 
 void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
-    P_ACTIV_ITEM p_item = NULL;
+    P_TRANS_ITEM p_trans = (P_TRANS_ITEM)ptr; 
 
     struct event_base *base = bufferevent_get_base(bev);
     int loop_terminate_flag = 0;
@@ -38,6 +38,26 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_print("GOT BEV_EVENT_EOF event! ");
+
+        // 实际传输端结束，那么只针对这个传输，把对端的连接断开，
+        // 由于TCP连接，那么对端的be_usr_srv和be_daemon_srv也会收到BEV_EVENT_EOF消息
+
+        if (bev == p_trans->bev_u && p_trans->bev_d) 
+        {
+            st_d_print("关闭be_srv_daemon[%d]", p_trans->usr_lport); 
+            bufferevent_free(p_trans->bev_d);
+        }
+        else if (bev == p_trans->bev_d && p_trans->bev_u) 
+        {
+            st_d_print("关闭be_srv_usr[%d]", p_trans->usr_lport); 
+            bufferevent_free(p_trans->bev_u);
+        }
+
+        p_trans->p_activ_item = NULL;
+        p_trans->bev_d = NULL;
+        p_trans->bev_u = NULL;
+        p_trans->usr_lport = 0;
+
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
@@ -229,16 +249,13 @@ static void thread_process(int fd, short which, void *arg)
 
             st_d_print("WORKTHREAD-> DAEMON_USR(%d) OK!", p_trans->usr_lport); 
 
-            st_d_print("Trigger CONN");
-
+            st_d_print("激活客户端Bufferevent使能！");
             CTL_HEAD head;
             memset(&head, 0, CTL_HEAD_LEN);
             head.direct = USR_DAEMON; 
             head.cmd = HD_CMD_CONN_ACT; 
             head.extra_param = p_trans->usr_lport; 
             head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
-            //head.usrport = p_trans->p_activ_item->usrport;
-            //head.daemonport = p_trans->p_activ_item->daemonport;
             bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
             head.direct = DAEMON_USR; 
             bufferevent_write(p_trans->p_activ_item->bev_usr, &head, CTL_HEAD_LEN); 

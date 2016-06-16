@@ -93,7 +93,22 @@ extern RET_T ss_activ_item_remove(P_SRV_OPT p_srvopt,
             {
                 st_d_print("删除对话：%s:%lu UUID %s！", p_acct_item->username, 
                            p_acct_item->userid, SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
+
                 // free this block
+                int i = 0;
+                for (i=0; i < MAX_TRANS_NUM; ++i)
+                {
+                    if (p_item->trans[i].usr_lport) 
+                    {
+                        st_d_print("释放连接：%d", p_item->trans[i].usr_lport); 
+
+                        if (p_item->trans[i].bev_d) 
+                            bufferevent_free(p_item->trans[i].bev_d);
+                        if(p_item->trans[i].bev_u)
+                            bufferevent_free(p_item->trans[i].bev_u);
+                    }
+                }
+
                 ss_uuid_erase(p_activ_item, &p_threadobj->uuid_tree);
                 slist_remove(&p_activ_item->list, &p_acct_item->items); 
                 free(p_activ_item); 
