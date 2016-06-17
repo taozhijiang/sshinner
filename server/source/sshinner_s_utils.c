@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <systemd/sd-id128.h> 
 
+#include <sys/types.h>          /* See NOTES */
+#include <sys/socket.h>
+
+#include <assert.h>
+
 #include <json-c/json.h>
 #include <json-c/json_tokener.h>
 
@@ -122,4 +127,78 @@ RET_T sc_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,
     bufferevent_write(bev, &head, CTL_HEAD_LEN);
 
     return RET_YES;
+}
+
+
+
+evutil_socket_t
+ss_get_tcp_socket_for_host(const char *hostname, ev_uint16_t port)
+{
+    char port_buf[6];
+    struct evutil_addrinfo hints;
+    struct evutil_addrinfo *answer = NULL;
+    int err;
+    evutil_socket_t sock;
+
+    /* Convert the port to decimal. */
+    evutil_snprintf(port_buf, sizeof(port_buf), "%d", (int)port);
+
+    /* Build the hints to tell getaddrinfo how to act. */
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET; /* v4 or v6 is fine. */
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP; /* We want a TCP socket */
+    /* Only return addresses we can use. */
+    hints.ai_flags = EVUTIL_AI_ADDRCONFIG;
+
+    /* Look up the hostname. */
+    err = evutil_getaddrinfo(hostname, port_buf, &hints, &answer);
+    if (err != 0) {
+          st_d_error( "Error while resolving '%s': %s",
+                  hostname, evutil_gai_strerror(err));
+          return -1;
+    }
+
+    /* If there was no error, we should have at least one answer. */
+    assert(answer);
+    /* Just use the first answer. */
+    sock = socket(answer->ai_family,
+                  answer->ai_socktype,
+                  answer->ai_protocol);
+    if (sock < 0)
+        return -1;
+    if (connect(sock, answer->ai_addr, answer->ai_addrlen)) {
+        /* Note that we're doing a blocking connect in this function.
+         * If this were nonblocking, we'd need to treat some errors
+         * (like EINTR and EAGAIN) specially. */
+        EVUTIL_CLOSESOCKET(sock);
+        return -1;
+    }
+
+    return sock;
+}
+
+
+evutil_socket_t ss_connect_srv(struct sockaddr_in* sin)
+{
+    int reuseaddr_on = 1;
+
+    evutil_socket_t sk_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sk_fd < 0)
+        return -1;
+
+    if (setsockopt(sk_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
+		sizeof(reuseaddr_on)) == -1)
+    {
+        st_d_print("Reuse socket opt faile!\n");
+        return -1;
+    }
+    if (connect(sk_fd, (struct sockaddr *)sin, sizeof(struct sockaddr_in))) 
+    {
+        st_d_error("Connect to server failed!\n");
+        close(socket);
+        return -1;
+    }
+    
+    return socket;
 }

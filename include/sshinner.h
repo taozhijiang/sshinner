@@ -14,6 +14,9 @@ enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
 #define HD_CMD_CONN      'C'   /* 客户端USR请求连接 */
 #define HD_CMD_CONN_ACT  'A'   // 负载传输激活
 
+#define HD_CMD_SS5       'S'   // ss5代理
+#define HD_CMD_SS5_ACT   'T'
+
 #define HD_CMD_OK        'O'
 #define HD_CMD_ERROR     'E'
 

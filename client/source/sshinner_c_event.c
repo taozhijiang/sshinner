@@ -52,7 +52,26 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 
         st_d_print("开始传输数据：%d", head.extra_param); 
     }
+    if (head.cmd == HD_CMD_SS5_ACT) 
+    {    
+        // OK，返回给本地程序告知可以开始传输了
+        // 这个绑定地址目前还没利用，主要是需要FTP这类需要带外传输另外连接端口的
+        char ret_msg[10] = "\x05\x00\x00\x01\x00\x00\x00\x00\x10\x10";
 
+        P_PORTTRANS p_trans = sc_find_trans(head.extra_param); 
+        if (!p_trans) 
+        {
+            SYS_ABORT("本地SS5未找到连接信息：%d", head.extra_param);
+        }
+
+        bufferevent_enable(p_trans->local_bev, EV_READ|EV_WRITE);
+        bufferevent_enable(p_trans->srv_bev, EV_READ|EV_WRITE); 
+
+        bufferevent_write(p_trans->local_bev, ret_msg, sizeof(ret_msg));
+        st_d_print("SS5准备传输数据：%d", head.extra_param); 
+
+        return;
+    }
     if (head.cmd == HD_CMD_CONN) 
     {
         assert(cltopt.C_TYPE == C_DAEMON);
@@ -395,6 +414,99 @@ void accept_conn_cb(struct evconnlistener *listener,
      * 为了避免这种情况，客户端接收到conn消息之后，需要先向DAEMON端发送一个控制 
      * 消息，打通DAEMON端的数据传输接口 
      */
+
+    return;
+}
+
+
+/**
+ * 只会在DAEMON端调用 
+ */
+void ss5_accept_conn_cb(struct evconnlistener *listener,
+    evutil_socket_t fd, struct sockaddr *address, int socklen,
+    void *ctx)
+{
+    char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
+    char buf[512];
+
+    getnameinfo (address, socklen,
+               hbuf, sizeof(hbuf),sbuf, sizeof(sbuf),
+               NI_NUMERICHOST | NI_NUMERICSERV);
+
+    st_print("SS5 WELCOME NEW CONNECT (HOST=%s, PORT=%s)\n", hbuf, sbuf);
+
+    /** 读取代理参数*/
+    // blocking socket here!
+    memset(buf, 0, sizeof(buf));
+    read(fd, buf, sizeof(buf)); //actually 1+1+1~255
+    if (buf[0] != 0x05)
+    {
+        st_d_error("ONLY SUPPORT SS5: %x!", buf[0]);
+        return;
+    }
+
+    write(fd, "\x05\x00", 2);  // NO AUTHENTICATION REQUIRED
+
+    // Fixed Head
+    // VER CMD RSV ATYP
+    memset(buf, 0, sizeof(buf));
+    read(fd, buf, sizeof(buf));
+    if (buf[0] != 0x05 || buf[1] != 0x01 /*CONNECT*/  || 
+        (buf[3] != 0x01 /*IP v4*/ && buf[3] != 0x03 /*DOMAINNAME*/ ))
+    {
+        st_d_error("FIX Request head check error！");
+        return;
+    }
+
+    int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sc_connect_srv(srv_fd) != RET_YES) 
+    {
+        st_d_error("连接服务器失败！");
+        return;
+    }
+
+    P_PORTTRANS p_trans = sc_find_trans(0);
+    if (!p_trans)
+    {
+        st_d_error("本地无空闲TRANS!");
+        close(srv_fd);
+        return;
+    }
+    p_trans->l_port = atoi(sbuf);  //先占用
+
+    if (sc_daemon_ss5_init_srv(srv_fd, buf, p_trans->l_port) != RET_YES) 
+    {
+        p_trans->l_port = 0;
+        close(srv_fd);
+        st_d_error("服务器返回错误!");
+        return;
+    }
+    else
+    {
+        st_d_print("SS5服务器返回OK!");
+    }
+
+    /* We got a new connection! Set up a bufferevent for it. */
+    struct event_base *base = evconnlistener_get_base(listener);
+
+    evutil_make_socket_nonblocking(fd);
+    /* 公用相同的call_bc传输机制 */
+    struct bufferevent *local_bev = 
+        bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
+    bufferevent_enable(local_bev, EV_READ|EV_WRITE);
+
+    evutil_make_socket_nonblocking(srv_fd);
+    struct bufferevent *srv_bev = 
+        bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
+    bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
+    bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
+
+    p_trans->usrport = cltopt.ss5_port;
+    p_trans->daemonport = 0;
+    p_trans->l_port = atoi(sbuf);
+    p_trans->local_bev = local_bev;
+    p_trans->srv_bev = srv_bev;
 
     return;
 }

@@ -62,6 +62,10 @@ extern RET_T load_settings_client(P_CLT_OPT p_opt)
         if (json_object_object_get_ex(p_class,"userid",&p_store_obj))
             p_opt->userid = json_object_get_int64(p_store_obj); 
 
+        if (json_object_object_get_ex(p_class,"ss5_port",&p_store_obj))
+            p_opt->ss5_port = json_object_get_int64(p_store_obj); 
+        else
+            p_opt->ss5_port = 0;
 
         if (p_opt->C_TYPE == C_DAEMON) 
         {
@@ -359,6 +363,76 @@ RET_T sc_usr_init_srv(int srv_fd)
         return RET_NO;
     }
 
+}
+
+RET_T sc_daemon_ss5_init_srv(int srv_fd, const char* request, unsigned short l_port)
+{
+    char buff[4096];
+    P_CTL_HEAD p_head = NULL;
+    RSA* p_rsa = NULL;
+
+    /*加载SSL公钥*/
+    FILE* fp = fopen(PUBLIC_KEY_FILE, "r");
+    if (!fp)
+    {
+        st_d_error("CLIENT读取公钥文件%s失败！", PUBLIC_KEY_FILE);
+        exit(EXIT_FAILURE);
+    }
+    p_rsa = RSA_new();
+
+    if(PEM_read_RSA_PUBKEY(fp, &p_rsa, 0, 0) == NULL)
+    {
+        st_d_error("CLIENT USR加载公钥失败！");
+        fclose(fp);
+        RSA_free(p_rsa); 
+        exit(EXIT_FAILURE);
+    }
+    fclose(fp);
+
+    memset(buff, 0, sizeof(buff));
+    p_head = GET_CTL_HEAD(buff);
+
+    p_head->direct = DAEMON_USR; 
+    p_head->cmd = HD_CMD_SS5; 
+    p_head->extra_param = l_port;
+    p_head->mach_uuid = cltopt.mach_uuid;
+
+    int dat_len = 0;
+    if (request[3] == 0x01)
+    {
+        dat_len = 4 + 4 + 2;
+    }
+    else
+    {
+        dat_len = 4 + 1 + request[4] + 2;
+    }
+
+    if (dat_len + 1 > (RSA_size(p_rsa) - 11 ) )
+    {
+        st_d_error("消息体太长!" );
+        RSA_free(p_rsa);
+        return RET_NO;
+    }
+
+    int len = RSA_public_encrypt(dat_len, request, GET_CTL_BODY(buff),
+                       p_rsa, RSA_PKCS1_PADDING);
+
+    if (len < 0 ) 
+    {
+        st_d_error("公钥加密失败：%d", len);
+        ERR_print_errors_fp(stderr);
+        RSA_free(p_rsa);
+        return RET_NO;
+    }
+
+    RSA_free(p_rsa);
+
+    p_head->dat_len = len;
+    p_head->crc = crc32(0L, GET_CTL_BODY(buff), len);
+
+    write(srv_fd, buff, CTL_HEAD_LEN + p_head->dat_len);
+
+    return RET_YES;
 }
 
 

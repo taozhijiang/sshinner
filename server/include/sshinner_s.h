@@ -27,7 +27,7 @@
 #include "st_slist.h"
 #include "sshinner.h"
 
-#define MAX_TRANS_NUM   10
+#define MAX_TRANS_NUM   500
 
 struct _activ_item;
 typedef struct _trans_item {
@@ -35,6 +35,7 @@ typedef struct _trans_item {
     unsigned short usr_lport;       //USR本地连接的端口，作为标示
     struct bufferevent *bev_u;
     struct bufferevent *bev_d;
+    void*  dat;
 } TRANS_ITEM, *P_TRANS_ITEM;
 
 typedef struct _activ_item {
@@ -84,14 +85,14 @@ static const char* PRIVATE_KEY_FILE = "./ssl/private.key";
 
 typedef struct _srv_opt
 {
-    pthread_t       main_thread_id;   
-    unsigned short  port;
+    pthread_t           main_thread_id;   
+    unsigned short    port;
 
-    RSA             *p_prikey;  //服务器用
+    RSA *               p_prikey;  //服务器用
 
-    SLIST_HEAD      acct_items;
-    int             thread_num;
-    P_THREAD_OBJ    thread_objs;
+    SLIST_HEAD          acct_items;
+    int                 thread_num;
+    P_THREAD_OBJ        thread_objs;
 }SRV_OPT, *P_SRV_OPT;
 
 
@@ -114,8 +115,10 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr);
 void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 static RET_T ss_main_handle_init(struct bufferevent *bev, 
                            P_CTL_HEAD p_head, char* dat);
+static RET_T ss_main_handle_ss5(struct bufferevent *bev, 
+                           P_CTL_HEAD p_head, void* dat);
 static RET_T ss_main_handle_ctl(struct bufferevent *bev, P_CTL_HEAD p_head);
-RET_T sc_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,
+RET_T ss_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,
                        int cmd, enum DIREC direct, unsigned long extra_param);
 
 /**

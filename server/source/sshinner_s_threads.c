@@ -214,6 +214,7 @@ static void thread_process(int fd, short which, void *arg)
     P_C_ITEM p_c_item = NULL;
     struct bufferevent *new_bev = NULL;
     char buf[1];
+    CTL_HEAD head;
 
     if (read(fd, buf, 1) != 1)
     {
@@ -250,7 +251,6 @@ static void thread_process(int fd, short which, void *arg)
             st_d_print("WORKTHREAD-> DAEMON_USR(%d) OK!", p_trans->usr_lport); 
 
             st_d_print("激活客户端Bufferevent使能！");
-            CTL_HEAD head;
             memset(&head, 0, CTL_HEAD_LEN);
             head.direct = USR_DAEMON; 
             head.cmd = HD_CMD_CONN_ACT; 
@@ -284,6 +284,93 @@ static void thread_process(int fd, short which, void *arg)
             st_d_print("WORKTHREAD-> USR_DAEMON(%d) OK!", p_trans->usr_lport); 
 
             break;
+
+        case 'S':   // DAEMON->USR
+            p_list = slist_fetch(&p_threadobj->conn_queue);
+            if (!p_list)
+            {
+                st_d_error("无法从任务队列中获取任务！");
+                return;
+            }
+            p_c_item = list_entry(p_list, C_ITEM, list);
+            p_trans = (P_TRANS_ITEM)p_c_item->arg.ptr; 
+            assert(p_trans->dat); 
+
+            int remote_socket = 0;
+            char* buf = (char *)p_trans->dat;
+
+            if (buf[3] == 0x01)
+            {
+                struct sockaddr_in sin;
+                memset(&sin, 0, sizeof(sin));
+
+                sin.sin_family = AF_INET;
+                memcpy(&sin.sin_addr.s_addr, &buf[4], 4);
+                memcpy(&sin.sin_port, &buf[4+4], 2);
+                
+                st_d_print("REQUEST: %s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+
+                remote_socket = ss_connect_srv(&sin);
+                if (remote_socket == -1)
+                {
+                    free(p_trans->dat);
+                    free(p_c_item);
+                    st_d_error("CONNECT ERROR!");
+                    return;
+                }
+            }
+            else
+            {
+                char remote_addr[512];
+                unsigned short remote_port = 0;
+                memset(remote_addr, 0, sizeof(remote_addr));
+                strncpy(remote_addr, &buf[4+1], buf[4]);
+                memcpy(&remote_port, &buf[4+1+buf[4]], 2);
+
+                st_d_print("REQUEST: %s:%d", remote_addr, ntohs(remote_port));
+
+                remote_socket = ss_get_tcp_socket_for_host(remote_addr, ntohs(remote_port)); 
+                if (remote_socket == -1)
+                {
+                    free(p_trans->dat);
+                    free(p_c_item);
+                    st_d_error("CONNECT ERROR!");
+                    return;
+                }
+            }
+
+            evutil_make_socket_nonblocking(p_c_item->socket);
+            struct bufferevent *new_bev = 
+                bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
+            bufferevent_setcb(new_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_trans);
+            bufferevent_enable(new_bev, EV_READ|EV_WRITE);
+
+            evutil_make_socket_nonblocking(remote_socket);
+            struct bufferevent *new_ext_bev = 
+                bufferevent_socket_new(p_threadobj->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
+            bufferevent_setcb(new_ext_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_trans);
+            bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
+
+            p_trans->bev_d = new_bev;
+            p_trans->bev_u = new_ext_bev;
+
+            free(p_trans->dat);
+            free(p_c_item);
+
+            st_d_print("SS5 R(%d) OK!", p_trans->usr_lport); 
+
+            st_d_print("激活客户端Bufferevent使能！");
+            memset(&head, 0, CTL_HEAD_LEN);
+            head.direct = USR_DAEMON; 
+            head.cmd = HD_CMD_SS5_ACT; 
+            head.extra_param = p_trans->usr_lport; 
+            head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
+            bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
+            break;
+
+    default:
+        SYS_ABORT("WHAT DO I GET: %c", buf[0]);
+        break;
     }
 
     return;

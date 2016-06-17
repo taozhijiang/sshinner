@@ -159,7 +159,50 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
         return;
     }
 
-    if (head.cmd == HD_CMD_INIT) 
+    if (head.cmd == HD_CMD_SS5) 
+    {
+        assert(head.dat_len > 0);
+
+        if (head.dat_len > 0) 
+        {       
+            if (!(dat = malloc(head.dat_len)) )
+            {
+                st_d_error("分配内存[%d]失败！", head.dat_len); 
+                return;
+            }
+            
+            memset(dat, 0, head.dat_len);
+            size_t offset = 0;
+            while ((n = evbuffer_remove(input, dat+offset, head.dat_len-offset)) > 0) 
+            {
+                if (n < (head.dat_len-offset)) 
+                {
+                    offset += n;
+                    continue;
+                }
+                else
+                break;
+            }
+
+            ulong crc = crc32(0L, dat, head.dat_len);
+            if (crc != head.crc) 
+            {
+                st_d_error("数据包校验失败: %lu-%lu", crc, head.crc); 
+                st_d_print("=>%s", (char*) dat); //呵呵，已经加密了
+                free(dat);
+                return;
+            }
+        }
+        ret = ss_main_handle_ss5(bev, &head, (char *)dat);
+        if (ret == RET_NO)
+        {
+            ss_ret_cmd_err(bev, head.mach_uuid, 
+                           head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
+            /* 成功的时候会在thread中释放，失败在此释放*/
+            free(dat);
+        }
+    }
+    else if (head.cmd == HD_CMD_INIT) 
     {
         assert(head.dat_len > 0);
 
@@ -209,7 +252,6 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 
     return;
 }
-
 
 
 static RET_T ss_main_handle_init(struct bufferevent *bev, 
@@ -376,6 +418,8 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
     p_threadobj  = ss_get_threadobj(p_head->mach_uuid);
     p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid); 
 
+    assert(p_head->cmd == HD_CMD_CONN);
+
     if (!p_activ_item)
     {
         st_d_print("会话 %s 不存在！", SD_ID128_CONST_STR(p_head->mach_uuid));
@@ -456,7 +500,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
     else
         write(p_threadobj->notify_send_fd, "D", 1);
 
-    st_d_print("已将CONN %s加入线程[%lu]处理队列！", 
+    st_d_print("已将%d CONN %s加入线程[%lu]处理队列！", p_trans->usr_lport,
                SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_threadobj->thread_id); 
 
     return RET_YES;
@@ -464,3 +508,89 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
 error_ret:
     return RET_NO;
 }
+
+
+static RET_T ss_main_handle_ss5(struct bufferevent *bev, 
+                           P_CTL_HEAD p_head, void* dat)
+{
+    P_THREAD_OBJ    p_threadobj = NULL;
+    P_ACTIV_ITEM    p_activ_item = NULL;
+    P_TRANS_ITEM    p_trans = NULL;
+    char dec_buf    [4096];
+
+    if (p_head->cmd != HD_CMD_SS5 || !dat || p_head->direct == USR_DAEMON) 
+    {
+        st_d_error("参数检查错误！");
+        return RET_NO;
+    }
+
+    /*服务器私钥解密数据*/
+    memset(dec_buf, 0, sizeof(dec_buf));
+    int len = RSA_private_decrypt(p_head->dat_len, dat, dec_buf, 
+                       srvopt.p_prikey, RSA_PKCS1_PADDING);
+    if (len < 0 )
+    {
+        st_d_error("服务端私钥解密数据%d出错！", len);
+        return RET_NO;
+    }
+
+    // 解密后的数据肯定比加密的要短
+    memcpy(dat, dec_buf, p_head->dat_len);
+
+    p_threadobj  = ss_get_threadobj(p_head->mach_uuid);
+    p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid); 
+    if (!p_activ_item)
+    {
+        st_d_print("会话 %s 不存在！", SD_ID128_CONST_STR(p_head->mach_uuid));
+        return RET_NO;
+    }
+
+    int i = 0;
+    for (i=0; i < MAX_TRANS_NUM; ++i)
+    {
+        if (p_activ_item->trans[i].usr_lport == 0) 
+        {
+            p_trans = &p_activ_item->trans[i];
+            break;
+        }
+    }
+
+    if (!p_trans)
+    {
+        st_d_error("TRANS队列已满！");
+        free(dat);
+        return RET_NO;
+    }
+
+    p_trans->p_activ_item = p_activ_item;
+    p_trans->usr_lport = p_head->extra_param;
+    p_trans->bev_d = bev;   // ATTENTION: should be freeed later!
+    p_trans->bev_u = NULL;
+    p_trans->dat = dat;
+
+    P_C_ITEM p_c = (P_C_ITEM)calloc(sizeof(C_ITEM), 1);
+    if (!p_c)
+    {
+        st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
+        return RET_NO;
+    }
+
+    /**
+     * 从main中删除event侦听，添加到线程池中
+     */
+    st_d_print("从main中删除bufferevent事件！");
+    bufferevent_free(bev);
+
+    p_c->socket = bufferevent_getfd(bev);
+    p_c->arg.ptr = (void*) p_trans; 
+    slist_add(&p_c->list, &p_threadobj->conn_queue);
+
+    write(p_threadobj->notify_send_fd, "S", 1);
+
+    st_d_print("已将SS:%d CONN %s加入线程[%lu]处理队列！", p_trans->usr_lport,
+               SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_threadobj->thread_id); 
+
+
+    return RET_YES;
+}
+

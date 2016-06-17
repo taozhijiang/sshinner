@@ -46,7 +46,7 @@ typedef struct _porttrans {
 } PORTTRANS, *P_PORTTRANS;
 
 // 目前硬编码了，实际在服务端是链表没有限制的
-#define MAX_PORT_NUM 10
+#define MAX_PORT_NUM 500
 
 
 static const char* PUBLIC_KEY_FILE = "./ssl/public.key";
@@ -60,6 +60,8 @@ typedef struct _clt_opt
     unsigned long     userid;
     struct sockaddr_in srv;
     struct bufferevent *srv_bev;    //主要是控制信息通信
+
+    unsigned short    ss5_port;    // SS5代理只支持用DAEMON端启动，因为USR端没法单独启动
 
     sd_id128_t          session_uuid;
     PORTMAP             maps[MAX_PORT_NUM];
@@ -85,6 +87,9 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 void accept_conn_cb(struct evconnlistener *listener,
     evutil_socket_t fd, struct sockaddr *address, int socklen,
     void *ctx);
+void ss5_accept_conn_cb(struct evconnlistener *listener,
+    evutil_socket_t fd, struct sockaddr *address, int socklen,
+    void *ctx);
 void accept_error_cb(struct evconnlistener *listener, void *ctx);
 // 数据处理类函数
 void bufferread_cb(struct bufferevent *bev, void *ptr);
@@ -96,6 +101,7 @@ void bufferread_cb(struct bufferevent *bev, void *ptr);
 RET_T sc_connect_srv(int srv_fd);
 RET_T sc_daemon_init_srv(int srv_fd);
 RET_T sc_usr_init_srv(int srv_fd);
+RET_T sc_daemon_ss5_init_srv(int srv_fd, const char* request, unsigned short l_port);
 
 RET_T sc_send_head_cmd(int cmd, unsigned long extra_param, 
                         unsigned short usrport, unsigned daemonport);
