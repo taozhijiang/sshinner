@@ -151,7 +151,7 @@ int main(int argc, char* argv[])
     
     if (cltopt.C_TYPE == C_DAEMON && cltopt.ss5_port) 
     {
-        st_d_print("创建sockets5代理端口：%d", cltopt.ss5_port); 
+        st_d_print("[DAEMON]创建sockets5代理端口：%d", cltopt.ss5_port); 
 
         struct evconnlistener *listener;
         struct sockaddr_in sin;
@@ -161,18 +161,18 @@ int main(int argc, char* argv[])
         sin.sin_port = htons(cltopt.ss5_port); /* Port Num */
 
         listener = evconnlistener_new_bind(base, ss5_accept_conn_cb, NULL,
-                LEV_OPT_LEAVE_SOCKETS_BLOCKING|LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, 
+                LEV_OPT_LEAVE_SOCKETS_BLOCKING/* 不阻塞 */|LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, 
                 -1/*backlog 连接无限制*/,
                 (struct sockaddr*)&sin, sizeof(sin));
 
         if (!listener) 
         {
-            st_d_error("sockets5代理创建侦听套接字失败 %d", cltopt.ss5_port); 
+            st_d_error("[DAEMON]sockets5代理创建侦听套接字失败 %d", cltopt.ss5_port); 
             exit(EXIT_FAILURE); 
         }
         evconnlistener_set_error_cb(listener, accept_error_cb);
 
-        st_d_print("sockets5代理创建侦听套接字OK %d", cltopt.ss5_port); 
+        st_d_print("[DAEMON]sockets5代理创建侦听套接字OK %d", cltopt.ss5_port); 
     }
 
     sc_set_eventcb_srv(srv_fd, base); 
@@ -182,7 +182,6 @@ int main(int argc, char* argv[])
      */
 
     event_base_loop(base, 0);
-        
     event_base_free(base);
     st_d_print("程序退出！！！！");
     return 0;

@@ -24,14 +24,14 @@ enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
  * 简单数据类型，可以直接赋值或者拷贝
  */
 typedef struct _ctl_head {
-     enum DIREC    direct;         // 1: USR->DAEMON, 2: DAEMON->USR
-     char          cmd;            
-     ulong          extra_param;     // 额外的参数
+     enum DIREC     direct;         // 1: USR->DAEMON, 2: DAEMON->USR
+     char           cmd;            // HD_CMD
+     ulong          extra_param;    // 额外的参数
      sd_id128_t     mach_uuid;
      unsigned short daemonport;
      unsigned short usrport;   
      ulong          crc;            //数据负载，如果dat_len=0就为0
-     unsigned int  dat_len;        //可选择项目，如果没有数据就为0
+     unsigned int   dat_len;        //可选择项目，如果没有数据就为0
  } CTL_HEAD, *P_CTL_HEAD;
 static const int CTL_HEAD_LEN = sizeof(CTL_HEAD);
 #define GET_CTL_HEAD(buf) ((P_CTL_HEAD)buf)

@@ -34,7 +34,6 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         // 对于任何一端断开了main_bev，那么服务端会拆除这个activ，
         // 以及其下面的所有的活动，然后CLT自己选择重新连接
 
-
         if (p_item)
         {
             if (p_item->bev_daemon == bev) 
@@ -155,7 +154,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 
     if ( evbuffer_remove(input, &head, CTL_HEAD_LEN) != CTL_HEAD_LEN)
     {
-        st_d_print("读取数据包头%d错误!", CTL_HEAD_LEN);
+        st_d_error("读取数据包头%d错误!", CTL_HEAD_LEN);
         return;
     }
 
@@ -198,7 +197,7 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
         {
             ss_ret_cmd_err(bev, head.mach_uuid, 
                            head.direct == USR_DAEMON? DAEMON_USR: USR_DAEMON);
-            /* 成功的时候会在thread中释放，失败在此释放*/
+            /* 成功的时候会在thread线程池处理之后释放，失败在此释放*/
             free(dat);
         }
     }
@@ -257,8 +256,8 @@ void main_bufferread_cb(struct bufferevent *bev, void *ptr)
 static RET_T ss_main_handle_init(struct bufferevent *bev, 
                            P_CTL_HEAD p_head, char* dat)
 {
-    json_object *new_obj = NULL;
-    json_object *p_store_obj = NULL;
+    json_object *new_obj        = NULL;
+    json_object *p_store_obj    = NULL;
 
     P_THREAD_OBJ    p_threadobj = NULL;
     P_ACCT_ITEM     p_acct_item = NULL;
@@ -578,7 +577,6 @@ static RET_T ss_main_handle_ss5(struct bufferevent *bev,
     /**
      * 从main中删除event侦听，添加到线程池中
      */
-    st_d_print("从main中删除bufferevent事件！");
     bufferevent_free(bev);
 
     p_c->socket = bufferevent_getfd(bev);
@@ -589,7 +587,6 @@ static RET_T ss_main_handle_ss5(struct bufferevent *bev,
 
     st_d_print("已将SS:%d CONN %s加入线程[%lu]处理队列！", p_trans->usr_lport,
                SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_threadobj->thread_id); 
-
 
     return RET_YES;
 }

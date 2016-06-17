@@ -73,9 +73,7 @@ typedef struct _thread_obj {
     struct event *p_notify_event;  /* listen event for notify pipe */
     int notify_receive_fd;      /* receiving end of notify pipe */
     int notify_send_fd;         /* sending end of notify pipe */
-
     struct rb_root  uuid_tree;
-
     pthread_mutex_t q_lock;
     SLIST_HEAD   conn_queue;    /* queue of new connections to handle */
 } THREAD_OBJ, *P_THREAD_OBJ;
@@ -85,14 +83,12 @@ static const char* PRIVATE_KEY_FILE = "./ssl/private.key";
 
 typedef struct _srv_opt
 {
-    pthread_t           main_thread_id;   
-    unsigned short    port;
-
-    RSA *               p_prikey;  //服务器用
-
-    SLIST_HEAD          acct_items;
-    int                 thread_num;
-    P_THREAD_OBJ        thread_objs;
+    pthread_t       main_thread_id;   
+    unsigned short  port;
+    RSA *           p_prikey;  //服务器用的解密私钥
+    SLIST_HEAD      acct_items;
+    int             thread_num;
+    P_THREAD_OBJ    thread_objs;
 }SRV_OPT, *P_SRV_OPT;
 
 
@@ -133,12 +129,6 @@ extern void thread_bufferread_cb(struct bufferevent *bev, void *ptr);
 extern void ss_ret_cmd_ok(struct bufferevent *bev,
                           sd_id128_t uuid, enum DIREC direct);
 extern void ss_ret_cmd_err(struct bufferevent *bev,
-                           sd_id128_t uuid, enum DIREC direct);
-extern void ss_ret_dat_err(struct bufferevent *bev,
-                           sd_id128_t uuid, enum DIREC direct);
-extern void ss_ret_cmd_keep(struct bufferevent *bev,
-                            sd_id128_t uuid, enum DIREC direct);
-extern void ss_ret_fatal(struct bufferevent *bev,
                            sd_id128_t uuid, enum DIREC direct);
 
 

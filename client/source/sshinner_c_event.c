@@ -135,8 +135,6 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
             //bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
 
-            p_trans->daemonport = head.daemonport;
-            p_trans->usrport = head.usrport;
             p_trans->l_port = head.extra_param;
             p_trans->local_bev = local_bev;
             p_trans->srv_bev = srv_bev;
@@ -146,8 +144,6 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
             CTL_HEAD ret_head;
             memset(&ret_head, 0, CTL_HEAD_LEN);
             ret_head.cmd = HD_CMD_CONN;
-            ret_head.daemonport = p_trans->daemonport;
-            ret_head.usrport = p_trans->usrport;
             ret_head.extra_param = p_trans->l_port; 
             ret_head.mach_uuid = cltopt.session_uuid;
             ret_head.direct = DAEMON_USR; 
@@ -183,8 +179,6 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         // main_be连接断开，这时候：如果是DAEMON端主动断开，那么USR端也要断开
         // 否则，就让DAEMON进行重置（重新连接服务器）
         // 任何情况下，所有的服务都必须断开
-
-        // TODO:
 
         // BEV_OPT_CLOSE_ON_FREE already closed the socket
         if (cltopt.C_TYPE == C_USR) 
@@ -296,8 +290,6 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         p_trans->local_bev = NULL;
         p_trans->srv_bev = NULL;
         p_trans->l_port = 0;
-        p_trans->daemonport = 0;
-        p_trans->usrport = 0;
 
     }
     else if (events & BEV_EVENT_TIMEOUT) 
@@ -389,8 +381,6 @@ void accept_conn_cb(struct evconnlistener *listener,
     bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
     //bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
-    p_trans->usrport = p_map->usrport;
-    p_trans->daemonport = p_map->daemonport;
     p_trans->l_port = atoi(sbuf);
     p_trans->local_bev = local_bev;
     p_trans->srv_bev = srv_bev;
@@ -494,16 +484,15 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
     struct bufferevent *local_bev = 
         bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
     bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
-    bufferevent_enable(local_bev, EV_READ|EV_WRITE);
+    //fferevent_enable(local_bev, EV_READ|EV_WRITE);
 
     evutil_make_socket_nonblocking(srv_fd);
     struct bufferevent *srv_bev = 
         bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
     bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
-    bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
+    //fferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
-    p_trans->usrport = cltopt.ss5_port;
-    p_trans->daemonport = 0;
+
     p_trans->l_port = atoi(sbuf);
     p_trans->local_bev = local_bev;
     p_trans->srv_bev = srv_bev;

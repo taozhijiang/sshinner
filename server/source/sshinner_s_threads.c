@@ -357,9 +357,7 @@ static void thread_process(int fd, short which, void *arg)
             free(p_trans->dat);
             free(p_c_item);
 
-            st_d_print("SS5 R(%d) OK!", p_trans->usr_lport); 
-
-            st_d_print("激活客户端Bufferevent使能！");
+            st_d_print("SS5激活客户端Bufferevent使能！");
             memset(&head, 0, CTL_HEAD_LEN);
             head.direct = USR_DAEMON; 
             head.cmd = HD_CMD_SS5_ACT; 
