@@ -42,21 +42,7 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         // 实际传输端结束，那么只针对这个传输，把对端的连接断开，
         // 由于TCP连接，那么对端的be_usr_srv和be_daemon_srv也会收到BEV_EVENT_EOF消息
 
-        if (bev == p_trans->bev_u && p_trans->bev_d) 
-        {
-            st_d_print("关闭be_srv_daemon[%d]", p_trans->usr_lport); 
-            bufferevent_free(p_trans->bev_d);
-        }
-        else if (bev == p_trans->bev_d && p_trans->bev_u) 
-        {
-            st_d_print("关闭be_srv_usr[%d]", p_trans->usr_lport); 
-            bufferevent_free(p_trans->bev_u);
-        }
-
-        p_trans->p_activ_item = NULL;
-        p_trans->bev_d = NULL;
-        p_trans->bev_u = NULL;
-        p_trans->usr_lport = 0;
+        ss_free_trans(p_trans->p_activ_item, p_trans);
 
     }
     else if (events & BEV_EVENT_TIMEOUT) 

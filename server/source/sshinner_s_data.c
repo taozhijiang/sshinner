@@ -94,20 +94,7 @@ extern RET_T ss_activ_item_remove(P_SRV_OPT p_srvopt,
                 st_d_print("删除对话：%s:%lu UUID %s！", p_acct_item->username, 
                            p_acct_item->userid, SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
 
-                // free this block
-                int i = 0;
-                for (i=0; i < MAX_TRANS_NUM; ++i)
-                {
-                    if (p_item->trans[i].usr_lport) 
-                    {
-                        st_d_print("释放连接：%d", p_item->trans[i].usr_lport); 
-
-                        if (p_item->trans[i].bev_d) 
-                            bufferevent_free(p_item->trans[i].bev_d);
-                        if(p_item->trans[i].bev_u)
-                            bufferevent_free(p_item->trans[i].bev_u);
-                    }
-                }
+                ss_free_all_trans(p_activ_item);
 
                 ss_uuid_erase(p_activ_item, &p_threadobj->uuid_tree);
                 slist_remove(&p_activ_item->list, &p_acct_item->items); 
@@ -160,4 +147,100 @@ extern RET_T ss_acct_remove(P_SRV_OPT p_srvopt, P_ACCT_ITEM p_item)
     }
 
     return ret;
+}
+
+
+
+extern P_TRANS_ITEM ss_find_trans(P_ACTIV_ITEM p_activ_item, 
+                            unsigned short l_sock)
+{
+    P_TRANS_ITEM p_trans = NULL;
+
+    if (!p_activ_item || slist_empty(&p_activ_item->trans))
+        return NULL;
+
+    slist_for_each_entry(p_trans, &p_activ_item->trans, list)
+    {
+        if (p_trans->usr_lport == l_sock) 
+        {
+           return p_trans;
+        }
+    }
+
+    return NULL;
+}
+
+extern P_TRANS_ITEM ss_create_trans(P_ACTIV_ITEM p_activ_item, 
+                            unsigned short l_sock)
+{
+    P_TRANS_ITEM p_trans = NULL;
+
+    if (!p_activ_item)
+    {
+        st_d_error("参数不合法！");
+        return NULL;
+    }
+
+    if (ss_find_trans(p_activ_item, l_sock))
+    {
+        st_d_error("TRANS已经存在：%d", l_sock);
+        return NULL;
+    }
+
+    p_trans = (P_TRANS_ITEM)calloc(sizeof(TRANS_ITEM), 1);
+    if (!p_trans)
+    {
+        st_d_error("TRANS申请内存失败！");
+        return NULL;
+    }
+
+    p_trans->usr_lport = l_sock;
+    slist_add(&p_trans->list, &p_activ_item->trans); 
+
+    return p_trans;
+}
+
+
+extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
+{
+    if (!p_activ_item || slist_empty(&p_activ_item->trans) 
+        || !p_trans || !p_trans->usr_lport) 
+    {
+        st_d_error("Free参数失败！");
+        return RET_NO;
+    }
+
+    if (p_trans->bev_d) 
+        bufferevent_free(p_trans->bev_d);
+    if (p_trans->bev_u) 
+        bufferevent_free(p_trans->bev_u);
+    slist_remove(&p_trans->list, &p_activ_item->trans); 
+    free(p_trans);
+
+    return RET_YES;
+}
+
+
+extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item)
+{
+    P_TRANS_ITEM p_trans = NULL;
+    P_SLIST_HEAD pos = NULL, n = NULL; 
+
+    if (!p_activ_item || slist_empty(&p_activ_item->trans)) 
+        return RET_YES;
+
+    slist_for_each_safe(pos, n, &p_activ_item->trans)
+    {
+        p_trans = list_entry(pos, TRANS_ITEM, list); 
+        st_d_print("释放：%d", p_trans->usr_lport);
+
+        if (p_trans->bev_d) 
+            bufferevent_free(p_trans->bev_d);
+        if (p_trans->bev_u) 
+            bufferevent_free(p_trans->bev_u);
+        slist_remove(&p_trans->list, &p_activ_item->trans); 
+        free(p_trans);
+    }
+
+    return RET_YES;
 }

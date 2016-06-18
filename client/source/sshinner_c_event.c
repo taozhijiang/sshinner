@@ -78,7 +78,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         if (cltopt.C_TYPE == C_DAEMON) 
         {
             sc_find_daemon_portmap(head.daemonport, 1);
-            P_PORTTRANS p_trans = sc_find_trans(0);
+            P_PORTTRANS p_trans = sc_create_trans(head.extra_param); 
             
             if (!p_trans)
             {
@@ -188,23 +188,7 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         }
         else
         {
-            P_PORTTRANS p_trans = NULL;
-
-            int i = 0;
-            for (i=0; i < MAX_PORT_NUM; ++i)
-            {
-                if (cltopt.trans[i].l_port) 
-                {
-                    st_d_print("Freeing: %d", cltopt.trans[i].l_port); 
-                    
-                    cltopt.trans[i].l_port = 0;
-                    if (cltopt.trans[i].local_bev)
-                        bufferevent_free(cltopt.trans[i].local_bev);
-                    if (cltopt.trans[i].srv_bev) 
-                        bufferevent_free(cltopt.trans[i].srv_bev);
-                }
-            }
-
+            sc_free_all_trans();
             st_d_print("DAEMON端重连服务器！");
 
             int srv_fd;
@@ -278,18 +262,7 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
         st_d_print("GOT BEV_EVENT_EOF event! ");
 
         // 关闭对端
-        if (p_trans && p_trans->l_port) 
-        {
-            st_d_print("释放[%d]:", p_trans->l_port); 
-            if (p_trans->local_bev)
-                bufferevent_free(p_trans->local_bev);
-            if (p_trans->srv_bev)
-                bufferevent_free(p_trans->srv_bev); 
-        }
-
-        p_trans->local_bev = NULL;
-        p_trans->srv_bev = NULL;
-        p_trans->l_port = 0;
+        sc_free_trans(p_trans);
 
     }
     else if (events & BEV_EVENT_TIMEOUT) 
@@ -363,7 +336,7 @@ void accept_conn_cb(struct evconnlistener *listener,
         return;
     }
 
-    P_PORTTRANS p_trans = sc_find_trans(0);
+    P_PORTTRANS p_trans = sc_create_trans(atoi(sbuf)); 
 
     if (!p_trans)
     {
@@ -455,7 +428,7 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
         return;
     }
 
-    P_PORTTRANS p_trans = sc_find_trans(0);
+    P_PORTTRANS p_trans = sc_create_trans(atoi(sbuf)); 
     if (!p_trans)
     {
         st_d_error("本地无空闲TRANS!");

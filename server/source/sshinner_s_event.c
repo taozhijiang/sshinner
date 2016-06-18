@@ -434,18 +434,10 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         bufferevent_free(bev);
 
         p_trans = NULL;
-        int i = 0;
 
         if (p_head->direct == USR_DAEMON) //寻找空余trans
         {
-            for (i=0; i < MAX_TRANS_NUM; ++i)
-            {
-                if (p_activ_item->trans[i].usr_lport == 0) 
-                {
-                    p_trans = &p_activ_item->trans[i];
-                    break;
-                }
-            }
+            p_trans = ss_create_trans(p_activ_item, p_head->extra_param);
 
             if (!p_trans)
             {
@@ -464,14 +456,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         }
         else
         {
-            for (i=0; i < MAX_TRANS_NUM; ++i)
-            {
-                if (p_activ_item->trans[i].usr_lport == p_head->extra_param) 
-                {
-                    p_trans = &p_activ_item->trans[i];
-                    break;
-                }
-            }
+            p_trans = ss_find_trans(p_activ_item, p_head->extra_param);
 
             if (!p_trans)
             {
@@ -544,15 +529,7 @@ static RET_T ss_main_handle_ss5(struct bufferevent *bev,
         return RET_NO;
     }
 
-    int i = 0;
-    for (i=0; i < MAX_TRANS_NUM; ++i)
-    {
-        if (p_activ_item->trans[i].usr_lport == 0) 
-        {
-            p_trans = &p_activ_item->trans[i];
-            break;
-        }
-    }
+    p_trans = ss_create_trans(p_activ_item, p_head->extra_param);
 
     if (!p_trans)
     {

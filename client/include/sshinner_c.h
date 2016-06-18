@@ -38,13 +38,14 @@ typedef struct _portmap {
 
 // 实际传输时候的端口和bufferevent，为动态创建，动态关闭的
 typedef struct _porttrans {
+    SLIST_HEAD list;
     unsigned short l_port;      //本地实际传输的端口
     struct bufferevent *local_bev;
     struct bufferevent *srv_bev;
 } PORTTRANS, *P_PORTTRANS;
 
 // 目前硬编码了，实际在服务端是链表没有限制的
-#define MAX_PORT_NUM 500
+#define MAX_PORT_NUM 10
 
 
 static const char* PUBLIC_KEY_FILE = "./ssl/public.key";
@@ -61,7 +62,7 @@ typedef struct _clt_opt
     unsigned short      ss5_port;    // SS5代理只支持用DAEMON端启动，因为USR端没法单独启动
     sd_id128_t          session_uuid;
     PORTMAP             maps[MAX_PORT_NUM];
-    PORTTRANS           trans[MAX_PORT_NUM];
+    SLIST_HEAD          trans;
 }CLT_OPT, *P_CLT_OPT;
 
 
@@ -109,6 +110,10 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
 P_PORTMAP sc_find_usr_portmap(unsigned short usrport);
 P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit);
-P_PORTMAP sc_find_trans(unsigned short l_sock);
+
+extern P_PORTTRANS sc_find_trans(unsigned short l_sock);
+extern P_PORTTRANS sc_create_trans(unsigned short l_sock);
+extern RET_T sc_free_trans(P_PORTTRANS p_trans);
+extern RET_T sc_free_all_trans(void);
 
 #endif

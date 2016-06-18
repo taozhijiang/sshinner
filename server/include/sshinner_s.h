@@ -27,10 +27,10 @@
 #include "st_slist.h"
 #include "sshinner.h"
 
-#define MAX_TRANS_NUM   500
 
 struct _activ_item;
 typedef struct _trans_item {
+    SLIST_HEAD      list;
     struct _activ_item*   p_activ_item;
     unsigned short usr_lport;       //USR本地连接的端口，作为标示
     struct bufferevent *bev_u;
@@ -45,8 +45,8 @@ typedef struct _activ_item {
     sd_id128_t         mach_uuid;   // DEAMON机器的会话ID
     struct bufferevent *bev_daemon; // 控制信息传输通道
     struct bufferevent *bev_usr;
-    TRANS_ITEM          trans[MAX_TRANS_NUM];
-    unsigned long       pkg_cnt;    // 转发的数据包计数
+    SLIST_HEAD          trans;
+    unsigned long     pkg_cnt;    // 转发的数据包计数
 } ACTIV_ITEM, *P_ACTIV_ITEM;
 
 typedef struct _acct_item {
@@ -146,5 +146,12 @@ static inline P_THREAD_OBJ ss_get_threadobj(sd_id128_t uuid)
 extern RET_T ss_acct_remove(P_SRV_OPT p_srvopt, P_ACCT_ITEM p_item);
 extern RET_T ss_activ_item_remove(P_SRV_OPT p_srvopt,
                                   P_THREAD_OBJ p_threadobj, P_ACTIV_ITEM p_item);
+
+extern P_TRANS_ITEM ss_find_trans(P_ACTIV_ITEM p_activ_item, 
+                            unsigned short l_sock);
+extern P_TRANS_ITEM ss_create_trans(P_ACTIV_ITEM p_activ_item, 
+                            unsigned short l_sock);
+extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans);
+extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item);
 
 #endif

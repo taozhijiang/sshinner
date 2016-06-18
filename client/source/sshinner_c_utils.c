@@ -38,6 +38,8 @@ extern RET_T load_settings_client(P_CLT_OPT p_opt)
     if( ! (p_obj = json_object_from_file("settings.json")) )
         return RET_NO;
 
+    slist_init(&p_opt->trans);
+
     if(json_object_object_get_ex(p_obj,"server",&p_class))
     {
         st_d_print("handling server configuration....");
@@ -126,6 +128,10 @@ extern void dump_clt_opts(P_CLT_OPT p_opt)
 
     st_d_print("");
     st_d_print("SESSION_UUID: %s", SD_ID128_CONST_STR(p_opt->session_uuid));
+
+    st_d_print("");
+    st_d_print("SOCKET5 PROXY: %d", p_opt->ss5_port); 
+
     if (p_opt->C_TYPE == C_USR) 
     {
         int i = 0;
@@ -176,21 +182,93 @@ P_PORTMAP sc_find_daemon_portmap(unsigned short daemonport, int createit)
     return p_map;
 }
 
-P_PORTMAP sc_find_trans(unsigned short l_sock)
+extern P_PORTTRANS sc_find_trans(unsigned short l_sock)
 {
     P_PORTTRANS p_trans = NULL;
 
-    int i = 0;
-    for (i=0; i < MAX_PORT_NUM; ++i)
+    if (slist_empty(&cltopt.trans))
+        return NULL;
+
+    slist_for_each_entry(p_trans, &cltopt.trans, list)
     {
-        if (cltopt.trans[i].l_port == l_sock) 
+        if (p_trans->l_port == l_sock) 
         {
-            p_trans = &cltopt.trans[i];
-            break;
+           return p_trans;
         }
     }
 
+    return NULL;
+}
+
+extern P_PORTTRANS sc_create_trans(unsigned short l_sock)
+{
+    P_PORTTRANS p_trans = NULL;
+
+    if (sc_find_trans(l_sock))
+    {
+        st_d_error("TRANS已经存在：%d", l_sock);
+        return NULL;
+    }
+
+    p_trans = (P_PORTTRANS)calloc(sizeof(PORTTRANS), 1);
+    if (!p_trans)
+    {
+        st_d_error("TRANS申请内存失败！");
+        return NULL;
+    }
+
+    p_trans->l_port = l_sock;
+    p_trans->local_bev = NULL;
+    p_trans->srv_bev = NULL;
+    slist_add(&p_trans->list, &cltopt.trans); 
+
     return p_trans;
+}
+
+
+extern RET_T sc_free_trans(P_PORTTRANS p_trans)
+{
+    if (!p_trans || !p_trans->l_port) 
+    {
+        st_d_error("Free参数失败！");
+        return RET_NO;
+    }
+
+    if (p_trans->srv_bev)
+        bufferevent_free(p_trans->srv_bev);
+    if (p_trans->local_bev) 
+        bufferevent_free(p_trans->local_bev);
+
+    slist_remove(&p_trans->list, &cltopt.trans); 
+    free(p_trans);
+
+    return RET_YES;
+}
+
+extern RET_T sc_free_all_trans(void)
+{
+    P_PORTTRANS p_trans = NULL;
+    P_SLIST_HEAD pos = NULL, n = NULL; 
+
+    if (slist_empty(&cltopt.trans))
+    {
+        return RET_YES;
+    }
+
+    slist_for_each_safe(pos, n, &cltopt.trans)
+    {
+        p_trans = list_entry(pos, PORTTRANS, list); 
+        st_d_print("释放：%d", p_trans->l_port);
+
+        if (p_trans->srv_bev)
+            bufferevent_free(p_trans->srv_bev);
+        if (p_trans->local_bev) 
+            bufferevent_free(p_trans->local_bev);
+        slist_remove(&p_trans->list, &cltopt.trans); 
+        free(p_trans);
+    }
+
+    return RET_YES;
 }
 
 RET_T sc_daemon_init_srv(int srv_fd)
@@ -495,3 +573,4 @@ void sc_set_eventcb_srv(int srv_fd, struct event_base *base)
 
     return;
 }
+
