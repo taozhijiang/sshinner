@@ -22,6 +22,7 @@
 #include "st_others.h"
 #include "st_slist.h"
 
+#include "sshinner_crypt.h"
 
 enum CLT_TYPE {
     C_DAEMON, C_USR,
@@ -61,6 +62,10 @@ typedef struct _clt_opt
     struct bufferevent* srv_bev;    //主要是控制信息通信
     unsigned short      ss5_port;    // SS5代理只支持用DAEMON端启动，因为USR端没法单独启动
     sd_id128_t          session_uuid;
+
+    ENCRYPT_CTX         ctx_enc;
+    ENCRYPT_CTX         ctx_dec;
+
     PORTMAP             maps[MAX_PORT_NUM];
     SLIST_HEAD          trans;
 }CLT_OPT, *P_CLT_OPT;

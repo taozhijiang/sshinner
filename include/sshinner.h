@@ -3,6 +3,10 @@
 
 #include <zlib.h>
 
+
+#define FRAME_SIZE 4096
+#define LOAD_SIZE (FRAME_SIZE-RC4_MD5_IV_LEN)
+
 /**
  * 规定客户端和服务器端通信的数据包格式： 
  */

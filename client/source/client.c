@@ -38,6 +38,12 @@ int main(int argc, char* argv[])
     struct sigaction sa;
     sa.sa_handler = backtrace_info;
     sigaction(SIGSEGV, &sa, NULL);
+
+    // ignore SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGABRT, SIG_IGN);
+
 #endif
 
     int opt_g = 0;

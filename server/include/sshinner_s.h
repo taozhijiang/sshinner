@@ -27,6 +27,8 @@
 #include "st_slist.h"
 #include "sshinner.h"
 
+#include "sshinner_crypt.h"
+
 
 struct _activ_item;
 typedef struct _trans_item {
@@ -45,13 +47,22 @@ typedef struct _activ_item {
     sd_id128_t         mach_uuid;   // DEAMON机器的会话ID
     struct bufferevent *bev_daemon; // 控制信息传输通道
     struct bufferevent *bev_usr;
+
+    // RC4_MD5　加密模块
+    ENCRYPT_CTX     ctx_enc;
+    ENCRYPT_CTX     ctx_dec;
+
     SLIST_HEAD          trans;
     unsigned long     pkg_cnt;    // 转发的数据包计数
+
+
+
 } ACTIV_ITEM, *P_ACTIV_ITEM;
 
 typedef struct _acct_item {
     char username   [128];      //
     unsigned long   userid;
+    unsigned char   enc_key[RC4_MD5_KEY_LEN];
     SLIST_HEAD      list;       //自身链表
     SLIST_HEAD      items;    
 } ACCT_ITEM, *P_ACCT_ITEM;
