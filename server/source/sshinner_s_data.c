@@ -79,34 +79,27 @@ extern void ss_uuid_erase(P_ACTIV_ITEM data, struct rb_root *tree)
     return rb_erase(&data->node, tree);
 }
 
-extern RET_T ss_activ_item_remove(P_SRV_OPT p_srvopt, 
-                                  P_THREAD_OBJ p_threadobj, P_ACTIV_ITEM p_item)
+extern RET_T ss_activ_item_remove(P_SRV_OPT p_srvopt, P_ACTIV_ITEM p_item)
 {
     P_ACCT_ITEM  p_acct_item = NULL;
     P_ACTIV_ITEM p_activ_item = NULL;
 
-    slist_for_each_entry(p_acct_item, &p_srvopt->acct_items, list)
+    p_activ_item =  ss_uuid_search(&p_srvopt->uuid_tree, p_item->mach_uuid);
+    if (!p_activ_item)
     {
-        slist_for_each_entry(p_activ_item, &p_acct_item->items, list)
-        {
-            if (p_activ_item == p_item) 
-            {
-                st_d_print("删除对话：%s:%lu UUID %s！", p_acct_item->username, 
-                           p_acct_item->userid, SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
-
-                ss_free_all_trans(p_activ_item);
-
-                ss_uuid_erase(p_activ_item, &p_threadobj->uuid_tree);
-                slist_remove(&p_activ_item->list, &p_acct_item->items); 
-                free(p_activ_item); 
-                goto out_check;
-            }
-        }
+        st_d_error("MACH_UUID: %s not fould!", SD_ID128_CONST_STR(p_activ_item->mach_uuid));
+        return RET_NO;
     }
 
-    return RET_NO;
+    p_acct_item = p_activ_item->p_acct;
+    st_d_print("删除对话：%s:%lu UUID %s！", p_acct_item->username, 
+               p_acct_item->userid, SD_ID128_CONST_STR(p_activ_item->mach_uuid)); 
 
-out_check:
+    ss_free_all_trans(p_activ_item);
+
+    ss_uuid_erase(p_activ_item, &srvopt.uuid_tree);
+    slist_remove(&p_activ_item->list, &p_acct_item->items); 
+    free(p_activ_item); 
     
     if (slist_empty(&p_acct_item->items)) 
     {
@@ -240,6 +233,12 @@ extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item)
     {
         p_trans = list_entry(pos, TRANS_ITEM, list); 
         st_d_print("释放：%d", p_trans->usr_lport);
+
+        if (p_trans->is_enc) 
+        {
+            encrypt_ctx_free(&p_trans->ctx_enc);
+            encrypt_ctx_free(&p_trans->ctx_dec);
+        }
 
         if (p_trans->bev_d) 
             bufferevent_free(p_trans->bev_d);

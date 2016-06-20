@@ -61,8 +61,7 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 
             st_d_print("释放连接：%s", SD_ID128_CONST_STR(p_item->mach_uuid));
 
-            P_THREAD_OBJ p_threadobj = ss_get_threadobj(p_item->mach_uuid);
-            ss_activ_item_remove(&srvopt, p_threadobj, p_item);
+            ss_activ_item_remove(&srvopt, p_item);
 
         }
     }
@@ -70,17 +69,6 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     {
         st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
     } 
-
-    /*
-    else if (events & BEV_EVENT_READING) 
-    {
-        st_d_print("GOT BEV_EVENT_READING event! ");
-    } 
-    else if (events & BEV_EVENT_WRITING) 
-    {
-        st_d_print("GOT BEV_EVENT_WRITING event! ");
-    }
-    */
 
     if (loop_terminate_flag)
     {
@@ -307,8 +295,6 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
             goto error_ret;
         }
 
-        p_threadobj = ss_get_threadobj(mach_uuid);
-
         p_acct_item = ss_find_acct_item(&srvopt, username, userid);
         if (!p_acct_item)
         {
@@ -316,7 +302,7 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
             goto error_ret;
         }
 
-        p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, mach_uuid);
+        p_activ_item = ss_uuid_search(&srvopt.uuid_tree, mach_uuid); 
 
         if (!p_activ_item)
         {
@@ -344,7 +330,6 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
     }
     else if (p_head->direct == DAEMON_USR) 
     {
-        p_threadobj = ss_get_threadobj(p_head->mach_uuid);
         p_acct_item = ss_find_acct_item(&srvopt, username, userid);
 
         if (!p_acct_item)
@@ -363,11 +348,10 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
             p_acct_item->userid = userid;
 
             slist_init(&p_acct_item->items);
-
             slist_add(&p_acct_item->list, &srvopt.acct_items);
         }
 
-        if (ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid))
+        if (ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid))
         {
             st_d_print("会话 %s:%lu %s 已经存在！", username, userid,
                        SD_ID128_CONST_STR(p_head->mach_uuid));
@@ -381,13 +365,14 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
            goto error_ret;
         }
 
-        p_activ_item->base = p_threadobj->base; 
+        p_activ_item->p_acct = p_acct_item; 
+        p_activ_item->base =   srvopt.main_base; 
         p_activ_item->mach_uuid = p_head->mach_uuid;
 
         encrypt_init(SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_activ_item->enc_key); 
 
         slist_add(&p_activ_item->list, &p_acct_item->items);
-        ss_uuid_insert(&p_threadobj->uuid_tree, p_activ_item);
+        ss_uuid_insert(&srvopt.uuid_tree, p_activ_item);
 
         p_activ_item->bev_daemon = bev;
 
@@ -417,8 +402,7 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
     P_ACTIV_ITEM    p_activ_item = NULL;
     P_TRANS_ITEM    p_trans = NULL;
 
-    p_threadobj  = ss_get_threadobj(p_head->mach_uuid);
-    p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid); 
+    p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid); 
 
     assert(p_head->cmd == HD_CMD_CONN);
 
@@ -479,6 +463,8 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
         goto error_ret;
     }
 
+    p_threadobj  = ss_get_threadobj(p_head->extra_param); 
+
     p_c->socket = bufferevent_getfd(bev);
     p_c->arg.ptr = p_trans;
 
@@ -502,7 +488,6 @@ error_ret:
 static RET_T ss_main_handle_ss5(struct bufferevent *bev, 
                            P_CTL_HEAD p_head, void* dat)
 {
-    P_THREAD_OBJ    p_threadobj = NULL;
     P_ACTIV_ITEM    p_activ_item = NULL;
     P_TRANS_ITEM    p_trans = NULL;
     char dec_buf    [4096];
@@ -526,8 +511,7 @@ static RET_T ss_main_handle_ss5(struct bufferevent *bev,
     // 解密后的数据肯定比加密的要短
     memcpy(dat, dec_buf, p_head->dat_len);
 
-    p_threadobj  = ss_get_threadobj(p_head->mach_uuid);
-    p_activ_item = ss_uuid_search(&p_threadobj->uuid_tree, p_head->mach_uuid); 
+    p_activ_item = ss_uuid_search(&srvopt.uuid_tree, p_head->mach_uuid); 
     if (!p_activ_item)
     {
         st_d_print("会话 %s 不存在！", SD_ID128_CONST_STR(p_head->mach_uuid));
@@ -564,6 +548,7 @@ static RET_T ss_main_handle_ss5(struct bufferevent *bev,
 
     p_c->socket = bufferevent_getfd(bev);
     p_c->arg.ptr = (void*) p_trans; 
+    P_THREAD_OBJ p_threadobj =  ss_get_threadobj(p_head->extra_param);
     slist_add(&p_c->list, &p_threadobj->conn_queue);
 
     write(p_threadobj->notify_send_fd, "S", 1);

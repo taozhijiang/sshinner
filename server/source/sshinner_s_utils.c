@@ -196,7 +196,7 @@ int ss_connect_srv(struct sockaddr_in* sin)
     if (connect(sk_fd, (struct sockaddr *)sin, sizeof(struct sockaddr_in))) 
     {
         st_d_error("Connect to server failed!\n");
-        close(socket);
+        close(sk_fd);
         return -1;
     }
     
