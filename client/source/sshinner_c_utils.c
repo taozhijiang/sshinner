@@ -239,6 +239,12 @@ extern RET_T sc_free_trans(P_PORTTRANS p_trans)
     if (p_trans->local_bev) 
         bufferevent_free(p_trans->local_bev);
 
+    if (p_trans->is_enc) 
+    {
+        encrypt_ctx_free(&p_trans->ctx_enc);
+        encrypt_ctx_free(&p_trans->ctx_enc);
+    }
+
     slist_remove(&p_trans->list, &cltopt.trans); 
     free(p_trans);
 

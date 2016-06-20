@@ -254,8 +254,10 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     {
         st_d_print("GOT BEV_EVENT_ERROR event! ");
 
-        bufferevent_free(bev);
-        event_base_loopexit(base, NULL);
+        //bufferevent_free(bev);
+        //event_base_loopexit(base, NULL);
+
+        sc_free_trans(p_trans);
     } 
     else if (events & BEV_EVENT_EOF) 
     {
@@ -283,6 +285,65 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     return;
 }
 
+void bufferread_cb_enc(struct bufferevent *bev, void *ptr)
+{
+    ENC_FRAME from_f;
+    ENC_FRAME to_f;
+
+    P_PORTTRANS p_trans = (P_PORTTRANS)ptr; 
+
+    struct evbuffer *input = bufferevent_get_input(bev);
+    struct evbuffer *output = bufferevent_get_output(bev);
+
+    if (bev == p_trans->local_bev && p_trans->srv_bev) 
+    {
+        st_d_print("加密转发数据包LOCAL->SRV");    // 解密
+
+#if 1
+        // 加密
+        from_f.len = bufferevent_read(p_trans->local_bev, from_f.dat, FRAME_SIZE); 
+        if (from_f.len > 0)
+        {
+            encrypt(&p_trans->ctx_enc, &from_f, &to_f);
+            bufferevent_write(p_trans->srv_bev, to_f.dat, to_f.len); 
+        }        
+        else
+        {
+            st_d_error("读取数据出错！");
+        }
+
+#else
+        bufferevent_write_buffer(p_trans->srv_bev, bufferevent_get_input(bev));
+#endif
+    }
+    else if (bev == p_trans->srv_bev && p_trans->local_bev) 
+    {
+        st_d_print("加密转发数据包SRV->LOCAL");    // 解密
+
+#if 1
+        // 解密
+        from_f.len = bufferevent_read(p_trans->srv_bev, from_f.dat, FRAME_SIZE);
+        if (from_f.len > 0)
+        {
+            decrypt(&p_trans->ctx_dec, &from_f, &to_f);
+            bufferevent_write(p_trans->local_bev, to_f.dat, to_f.len);
+        }
+        else
+        {
+            st_d_error("读取数据出错！");
+        }
+
+#else
+        bufferevent_write_buffer(p_trans->local_bev, bufferevent_get_input(bev));
+#endif
+    }
+    else
+    {
+        SYS_ABORT("WRRRRRR!");
+    }
+
+    return;
+}
 
 /**
  * 客户端程序，USR/DAEMON都是从应用程序读取到数据了，然后推送到SRV进行转发到服务器 
@@ -354,6 +415,7 @@ void accept_conn_cb(struct evconnlistener *listener,
     bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
     //bufferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
+    p_trans->is_enc = 0;
     p_trans->l_port = atoi(sbuf);
     p_trans->local_bev = local_bev;
     p_trans->srv_bev = srv_bev;
@@ -452,17 +514,21 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
     /* We got a new connection! Set up a bufferevent for it. */
     struct event_base *base = evconnlistener_get_base(listener);
 
+    p_trans->is_enc = 1;
+    encrypt_ctx_init(&p_trans->ctx_enc, atoi(sbuf), cltopt.enc_key, 1); 
+    encrypt_ctx_init(&p_trans->ctx_dec, atoi(sbuf), cltopt.enc_key, 0); 
+
     evutil_make_socket_nonblocking(fd);
     /* 公用相同的call_bc传输机制 */
     struct bufferevent *local_bev = 
         bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-    bufferevent_setcb(local_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
+    bufferevent_setcb(local_bev, bufferread_cb_enc, NULL, bufferevent_cb, p_trans);
     //fferevent_enable(local_bev, EV_READ|EV_WRITE);
 
     evutil_make_socket_nonblocking(srv_fd);
     struct bufferevent *srv_bev = 
         bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
-    bufferevent_setcb(srv_bev, bufferread_cb, NULL, bufferevent_cb, p_trans);
+    bufferevent_setcb(srv_bev, bufferread_cb_enc, NULL, bufferevent_cb, p_trans); 
     //fferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
 

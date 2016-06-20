@@ -58,7 +58,7 @@ typedef enum RET_TYPE {
     }while(0)
 
 typedef struct _st_small_obj {
-    char    data[2048];
+    char    data[4096];
     size_t  len;
 } ST_SMALL_OBJ, *P_ST_SMALL_OBJ;
 

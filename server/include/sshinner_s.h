@@ -35,6 +35,12 @@ typedef struct _trans_item {
     SLIST_HEAD      list;
     struct _activ_item*   p_activ_item;
     unsigned short usr_lport;       //USR本地连接的端口，作为标示
+
+    // RC4_MD5　加密模块
+    int                 is_enc;
+    ENCRYPT_CTX         ctx_enc;
+    ENCRYPT_CTX         ctx_dec;
+
     struct bufferevent *bev_u;
     struct bufferevent *bev_d;
     void*  dat;
@@ -47,13 +53,9 @@ typedef struct _activ_item {
     sd_id128_t         mach_uuid;   // DEAMON机器的会话ID
     struct bufferevent *bev_daemon; // 控制信息传输通道
     struct bufferevent *bev_usr;
-
-    // RC4_MD5　加密模块
-    ENCRYPT_CTX     ctx_enc;
-    ENCRYPT_CTX     ctx_dec;
-
+    unsigned char       enc_key[RC4_MD5_KEY_LEN]; 
     SLIST_HEAD          trans;
-    unsigned long     pkg_cnt;    // 转发的数据包计数
+    unsigned long       pkg_cnt;    // 转发的数据包计数
 
 
 
@@ -62,7 +64,6 @@ typedef struct _activ_item {
 typedef struct _acct_item {
     char username   [128];      //
     unsigned long   userid;
-    unsigned char   enc_key[RC4_MD5_KEY_LEN];
     SLIST_HEAD      list;       //自身链表
     SLIST_HEAD      items;    
 } ACCT_ITEM, *P_ACCT_ITEM;
@@ -134,6 +135,9 @@ RET_T ss_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,
 extern RET_T ss_create_worker_threads(size_t thread_num, P_THREAD_OBJ threads);
 extern void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 extern void thread_bufferread_cb(struct bufferevent *bev, void *ptr);
+
+extern void thread_bufferread_cb_enc(struct bufferevent *bev, void *ptr);
+
 /* 简易从服务器发送控制信息 */
 
 

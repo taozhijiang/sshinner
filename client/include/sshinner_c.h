@@ -43,6 +43,11 @@ typedef struct _porttrans {
     unsigned short l_port;      //本地实际传输的端口
     struct bufferevent *local_bev;
     struct bufferevent *srv_bev;
+
+    int                 is_enc;
+    ENCRYPT_CTX         ctx_enc;
+    ENCRYPT_CTX         ctx_dec;
+
 } PORTTRANS, *P_PORTTRANS;
 
 // 目前硬编码了，实际在服务端是链表没有限制的
@@ -63,8 +68,7 @@ typedef struct _clt_opt
     unsigned short      ss5_port;    // SS5代理只支持用DAEMON端启动，因为USR端没法单独启动
     sd_id128_t          session_uuid;
 
-    ENCRYPT_CTX         ctx_enc;
-    ENCRYPT_CTX         ctx_dec;
+    unsigned char       enc_key[RC4_MD5_IV_LEN];
 
     PORTMAP             maps[MAX_PORT_NUM];
     SLIST_HEAD          trans;

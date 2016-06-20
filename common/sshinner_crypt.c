@@ -24,11 +24,13 @@ RET_T encrypt_init(const char* passwd, char store_key[])
         return RET_NO;
     }
 
+    st_d_print("初始化OK: %s", passwd);
+
     return RET_YES;
 }
 
 
-RET_T encrypt_ctx_init(P_ENCRYPT_CTX p_ctx, const char* enc_key, int enc)
+RET_T encrypt_ctx_init(P_ENCRYPT_CTX p_ctx, unsigned long salt, const char* enc_key, int enc)
 {
     EVP_CIPHER_CTX_init(&p_ctx->ctx); 
 
@@ -50,8 +52,12 @@ RET_T encrypt_ctx_init(P_ENCRYPT_CTX p_ctx, const char* enc_key, int enc)
 
     memcpy(p_ctx->enc_key, enc_key, RC4_MD5_KEY_LEN);
 
-    if (enc)
-        RAND_bytes(p_ctx->iv, RC4_MD5_IV_LEN); 
+    char buf[128];
+    char md5_buf[128];
+    sprintf(buf, "-XX%dXX-", salt);
+    MD5(buf, strlen(buf), md5_buf);
+    
+    memcpy(p_ctx->iv, md5_buf, RC4_MD5_IV_LEN);
 
     p_ctx->is_init = 0;
 
@@ -90,7 +96,6 @@ RET_T encrypt(P_ENCRYPT_CTX p_ctx,
         p_ctx->is_init = 1;
     }
 
-    memcpy(p_store->iv_head, p_ctx->iv, RC4_MD5_IV_LEN); 
     if (! EVP_CipherUpdate(&p_ctx->ctx, p_store->dat, &p_store->len, 
                             p_plain->dat, p_plain->len) )
     {
@@ -109,8 +114,6 @@ RET_T decrypt(P_ENCRYPT_CTX p_ctx,
 
     if (!p_ctx->is_init) 
     {
-        memcpy(p_ctx->iv, p_cipher->iv_head, RC4_MD5_IV_LEN);
-
         unsigned char key_iv[32]; 
         memcpy(key_iv, p_ctx->enc_key, 16); 
         memcpy(key_iv + 16, p_ctx->iv, 16);

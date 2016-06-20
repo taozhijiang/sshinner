@@ -214,6 +214,13 @@ extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
         bufferevent_free(p_trans->bev_d);
     if (p_trans->bev_u) 
         bufferevent_free(p_trans->bev_u);
+
+    if (p_trans->is_enc) 
+    {
+        encrypt_ctx_free(&p_trans->ctx_enc);
+        encrypt_ctx_free(&p_trans->ctx_dec);
+    }
+
     slist_remove(&p_trans->list, &p_activ_item->trans); 
     free(p_trans);
 

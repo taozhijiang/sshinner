@@ -12,11 +12,11 @@
 #define RC4_MD5_IV_LEN      16
 
 #define FRAME_SIZE 4096
-#define LOAD_SIZE (FRAME_SIZE-RC4_MD5_IV_LEN)
+
+/*简单起见，不进行iv的传输，iv的计算根据每次连接信息计算出来*/
 
 typedef struct _enc_frame {
-    char  iv_head[RC4_MD5_IV_LEN];
-    char  dat[LOAD_SIZE];
+    char  dat[FRAME_SIZE];
     int   len;
 } ENC_FRAME, *P_ENC_FRAME;
 
@@ -29,7 +29,8 @@ typedef struct _encrypt_ctx{
 } ENCRYPT_CTX, *P_ENCRYPT_CTX;
 
 RET_T encrypt_init(const char* passwd, char store_key[]);
-RET_T encrypt_ctx_init(P_ENCRYPT_CTX p_ctx, const char* enc_key, int enc);
+RET_T encrypt_ctx_init(P_ENCRYPT_CTX p_ctx, unsigned long salt, 
+                       const char* enc_key, int enc);
 int encrypt_ctx_free(P_ENCRYPT_CTX p_ctx);
 
 RET_T encrypt(P_ENCRYPT_CTX p_ctx, 

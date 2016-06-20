@@ -354,13 +354,14 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
             p_acct_item = (P_ACCT_ITEM)malloc(sizeof(ACCT_ITEM));
             if (!p_acct_item)
             {
-                st_d_print("申请内存[%d]失败！");
+                st_d_print("申请内存[%d]失败！", sizeof(ACCT_ITEM));
                 goto error_ret;
             }
 
             memset(p_acct_item, 0, sizeof(ACCT_ITEM));
             strncpy(p_acct_item->username, username, sizeof(p_acct_item->username));
             p_acct_item->userid = userid;
+
             slist_init(&p_acct_item->items);
 
             slist_add(&p_acct_item->list, &srvopt.acct_items);
@@ -382,6 +383,8 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
 
         p_activ_item->base = p_threadobj->base; 
         p_activ_item->mach_uuid = p_head->mach_uuid;
+
+        encrypt_init(SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_activ_item->enc_key); 
 
         slist_add(&p_activ_item->list, &p_acct_item->items);
         ss_uuid_insert(&p_threadobj->uuid_tree, p_activ_item);
@@ -444,6 +447,8 @@ static RET_T ss_main_handle_ctl(struct bufferevent *bev,
                 st_d_error("TRANS队列已满！");
                 return RET_NO;
             }
+
+            p_trans->is_enc = 0;
             p_trans->p_activ_item = p_activ_item;
             p_trans->usr_lport = p_head->extra_param;
 
@@ -538,6 +543,7 @@ static RET_T ss_main_handle_ss5(struct bufferevent *bev,
         return RET_NO;
     }
 
+    p_trans->is_enc = 1;
     p_trans->p_activ_item = p_activ_item;
     p_trans->usr_lport = p_head->extra_param;
     p_trans->bev_d = bev;   // ATTENTION: should be freeed later!

@@ -155,8 +155,12 @@ int main(int argc, char* argv[])
         }
     }
     
+
     if (cltopt.C_TYPE == C_DAEMON && cltopt.ss5_port) 
     {
+
+        encrypt_init(SD_ID128_CONST_STR(cltopt.mach_uuid), cltopt.enc_key);
+
         st_d_print("[DAEMON]创建sockets5代理端口：%d", cltopt.ss5_port); 
 
         struct evconnlistener *listener;
@@ -180,6 +184,7 @@ int main(int argc, char* argv[])
 
         st_d_print("[DAEMON]sockets5代理创建侦听套接字OK %d", cltopt.ss5_port); 
     }
+
 
     sc_set_eventcb_srv(srv_fd, base); 
 

@@ -102,6 +102,62 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
     return;
 }
 
+void thread_bufferread_cb_enc(struct bufferevent *bev, void *ptr)
+{
+    P_TRANS_ITEM p_trans = (P_TRANS_ITEM)ptr; 
+
+    ENC_FRAME from_f;
+    ENC_FRAME to_f;
+
+    struct evbuffer *input = bufferevent_get_input(bev);
+    struct evbuffer *output = bufferevent_get_output(bev);
+
+    if (bev == p_trans->bev_u && p_trans->bev_d) 
+    {
+        st_d_print("加密转发数据包USR->REMOTE");    // 解密
+#if 1
+        from_f.len = bufferevent_read(p_trans->bev_u, from_f.dat, FRAME_SIZE); 
+        if (from_f.len > 0)
+        {
+            decrypt(&p_trans->ctx_dec, &from_f, &to_f);
+            bufferevent_write(p_trans->bev_d, to_f.dat, from_f.len);
+        }        
+        else
+        {
+            st_d_error("读取数据出错！");
+        }
+
+#else
+        bufferevent_write_buffer(p_trans->bev_d, bufferevent_get_input(bev));
+#endif
+    }
+    else if (bev == p_trans->bev_d && p_trans->bev_u) 
+    {
+        st_d_print("加密转发数据包REMOTE->USR");    // 加密
+#if 1
+        from_f.len = bufferevent_read(p_trans->bev_d, from_f.dat, FRAME_SIZE);
+        if (from_f.len > 0)
+        {
+            encrypt(&p_trans->ctx_enc, &from_f, &to_f);
+            bufferevent_write(p_trans->bev_u, to_f.dat, to_f.len);
+        }        
+        else
+        {
+            st_d_error("读取数据出错！");
+        }
+
+#else 
+        bufferevent_write_buffer(p_trans->bev_u, bufferevent_get_input(bev));
+#endif
+    }
+    else
+    {
+        SYS_ABORT("WRRRRRR!");
+    }
+
+    return;
+}
+
 
 static void *thread_run(void *arg);
 static void thread_process(int fd, short which, void *arg);
@@ -282,6 +338,9 @@ static void thread_process(int fd, short which, void *arg)
             p_trans = (P_TRANS_ITEM)p_c_item->arg.ptr; 
             assert(p_trans->dat); 
 
+            encrypt_ctx_init(&p_trans->ctx_enc, p_trans->usr_lport, p_trans->p_activ_item->enc_key, 1); 
+            encrypt_ctx_init(&p_trans->ctx_dec, p_trans->usr_lport, p_trans->p_activ_item->enc_key, 0);
+
             int remote_socket = 0;
             char* buf = (char *)p_trans->dat;
 
@@ -328,13 +387,13 @@ static void thread_process(int fd, short which, void *arg)
             evutil_make_socket_nonblocking(p_c_item->socket);
             struct bufferevent *new_bev = 
                 bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
-            bufferevent_setcb(new_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_trans);
+            bufferevent_setcb(new_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
             bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
             evutil_make_socket_nonblocking(remote_socket);
             struct bufferevent *new_ext_bev = 
                 bufferevent_socket_new(p_threadobj->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
-            bufferevent_setcb(new_ext_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_trans);
+            bufferevent_setcb(new_ext_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
             bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
 
             p_trans->bev_d = new_bev;
