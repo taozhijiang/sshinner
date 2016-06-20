@@ -33,7 +33,9 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_ERROR) 
     {
         st_d_print("GOT BEV_EVENT_ERROR event! ");
-        loop_terminate_flag = 1;
+        //loop_terminate_flag = 1;
+
+        ss_free_trans(p_trans->p_activ_item, p_trans);
     } 
     else if (events & BEV_EVENT_EOF) 
     {
@@ -47,7 +49,9 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
-        st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
+        //st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
+
+        ss_free_trans(p_trans->p_activ_item, p_trans);
     } 
 
     /*
@@ -292,6 +296,9 @@ static void thread_process(int fd, short which, void *arg)
 
             st_d_print("WORKTHREAD-> DAEMON_USR(%d) OK!", p_trans->usr_lport); 
 
+            st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]]", 
+                       slist_count(&p_trans->p_activ_item->trans)); 
+
             st_d_print("激活客户端Bufferevent使能！");
             memset(&head, 0, CTL_HEAD_LEN);
             head.direct = USR_DAEMON; 
@@ -352,7 +359,8 @@ static void thread_process(int fd, short which, void *arg)
                 sin.sin_family = AF_INET;
                 memcpy(&sin.sin_addr.s_addr, &buf[4], 4);
                 memcpy(&sin.sin_port, &buf[4+4], 2);
-                
+                free(p_trans->dat);
+
                 st_d_print("REQUEST: %s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
 
                 remote_socket = ss_connect_srv(&sin);
@@ -366,22 +374,52 @@ static void thread_process(int fd, short which, void *arg)
             }
             else
             {
-                char remote_addr[512];
+                char remote_addr[128];
                 unsigned short remote_port = 0;
                 memset(remote_addr, 0, sizeof(remote_addr));
                 strncpy(remote_addr, &buf[4+1], buf[4]);
                 memcpy(&remote_port, &buf[4+1+buf[4]], 2);
+                free(p_trans->dat);
+
+                P_DNS_STRUCT p_dns = (P_DNS_STRUCT)calloc(sizeof(DNS_STRUCT), 1);
+                if (!p_dns)
+                {
+                    st_d_error("申请内存失败：%d", sizeof(DNS_STRUCT));
+                    free(p_c_item);
+                    return;
+                }
 
                 st_d_print("REQUEST: %s:%d", remote_addr, ntohs(remote_port));
 
-                remote_socket = ss_get_tcp_socket_for_host(remote_addr, ntohs(remote_port)); 
-                if (remote_socket == -1)
-                {
-                    free(p_trans->dat);
-                    free(p_c_item);
-                    st_d_error("CONNECT ERROR!");
-                    return;
+                strncpy(p_dns->hostname, remote_addr, sizeof(p_dns->hostname));
+
+                p_dns->port = remote_port;
+                p_dns->p_c_item = p_c_item;
+                p_dns->base = p_threadobj->base;
+                p_dns->p_trans = p_trans;
+
+                struct evutil_addrinfo hints;
+                struct evdns_getaddrinfo_request *req;
+                memset(&hints, 0, sizeof(hints));
+                hints.ai_family = AF_INET;
+                hints.ai_flags = EVUTIL_AI_CANONNAME;
+                /* Unless we specify a socktype, we'll get at least two entries for
+                 * each address: one for TCP and one for UDP. That's not what we
+                 * want. */
+                hints.ai_socktype = SOCK_STREAM;
+                hints.ai_protocol = IPPROTO_TCP;
+
+
+                req = evdns_getaddrinfo(
+                        dnsbase, remote_addr, NULL /* no service name given */, 
+                                  &hints, dns_query_cb, p_dns);
+                if (req == NULL) {
+                  printf("    [request for %s returned immediately]\n", remote_addr);
+                  /* No need to free user_data or decrement n_pending_requests; that
+                   * happened in the callback. */
                 }
+
+                return;
             }
 
             evutil_make_socket_nonblocking(p_c_item->socket);
@@ -399,8 +437,10 @@ static void thread_process(int fd, short which, void *arg)
             p_trans->bev_d = new_bev;
             p_trans->bev_u = new_ext_bev;
 
-            free(p_trans->dat);
             free(p_c_item);
+
+            st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]]", 
+                       slist_count(&p_trans->p_activ_item->trans)); 
 
             st_d_print("SS5激活客户端Bufferevent使能！");
             memset(&head, 0, CTL_HEAD_LEN);
@@ -417,5 +457,79 @@ static void thread_process(int fd, short which, void *arg)
     }
 
     return;
+}
+
+
+
+
+void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr)
+{
+    
+    P_DNS_STRUCT p_dns = (P_DNS_STRUCT)ptr;
+
+    if (errcode) 
+    {
+        printf("Query error for: %s -> %s\n", p_dns->hostname, evutil_gai_strerror(errcode)); 
+    }
+    else
+    {
+        struct evutil_addrinfo *ai;
+        struct sockaddr_in sin;
+
+        for (ai = addr; ai; ai = ai->ai_next) 
+        {
+            if (ai->ai_family == AF_INET) 
+            {
+                memset(&sin, 0, sizeof(sin));
+                sin.sin_family = AF_INET;
+                sin.sin_addr = ((struct sockaddr_in *)ai->ai_addr)->sin_addr;
+                sin.sin_port = p_dns->port;
+
+                st_d_print("REQUEST: %s:%d", inet_ntoa(sin.sin_addr), ntohs(sin.sin_port));
+
+                int remote_socket = ss_connect_srv(&sin);
+                if (remote_socket == -1)
+                {
+                    st_d_error("%s failed!", inet_ntoa(sin.sin_addr));
+                    continue;
+                }
+
+                evutil_make_socket_nonblocking(p_dns->p_c_item->socket);
+                struct bufferevent *new_bev = 
+                    bufferevent_socket_new(p_dns->base, p_dns->p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
+                bufferevent_setcb(new_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_dns->p_trans);
+                bufferevent_enable(new_bev, EV_READ|EV_WRITE);
+
+                evutil_make_socket_nonblocking(remote_socket);
+                struct bufferevent *new_ext_bev = 
+                    bufferevent_socket_new(p_dns->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
+                bufferevent_setcb(new_ext_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_dns->p_trans);
+                bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
+
+                p_dns->p_trans->bev_d = new_bev;
+                p_dns->p_trans->bev_u = new_ext_bev;
+
+                st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]]", 
+                           slist_count(&p_dns->p_trans->p_activ_item->trans)); 
+
+                st_d_print("SS5激活客户端Bufferevent使能！");
+                CTL_HEAD head;
+                memset(&head, 0, CTL_HEAD_LEN);
+                head.direct = USR_DAEMON; 
+                head.cmd = HD_CMD_SS5_ACT; 
+                head.extra_param = p_dns->p_trans->usr_lport; 
+                head.mach_uuid = p_dns->p_trans->p_activ_item->mach_uuid; 
+                bufferevent_write(p_dns->p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
+
+                break;
+
+            } 
+
+        }
+        evutil_freeaddrinfo(addr);
+    }
+
+    free(p_dns->p_c_item);
+    free(p_dns);
 }
 

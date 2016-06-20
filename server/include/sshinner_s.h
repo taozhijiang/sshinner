@@ -149,6 +149,7 @@ extern void ss_ret_cmd_err(struct bufferevent *bev,
 
 extern SRV_OPT srvopt;
 extern struct  event_base *main_base;
+extern struct  evdns_base *dnsbase;;
 
 /**
  * UUID到线程池索引的映射
@@ -168,5 +169,17 @@ extern P_TRANS_ITEM ss_create_trans(P_ACTIV_ITEM p_activ_item,
                             unsigned short l_sock);
 extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans);
 extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item);
+
+
+// DNS 异步查询
+typedef struct _dns_struct {
+    char hostname   [128];         // abitriay
+    ev_uint16_t     port;
+    struct event_base* base;
+    P_C_ITEM        p_c_item;
+    P_TRANS_ITEM    p_trans;
+} DNS_STRUCT, *P_DNS_STRUCT;
+
+void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr);
 
 #endif

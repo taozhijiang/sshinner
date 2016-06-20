@@ -270,6 +270,8 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_TIMEOUT) 
     {
         st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
+
+        sc_free_trans(p_trans);
     } 
     /*
     else if (events & BEV_EVENT_READING) 
@@ -420,6 +422,9 @@ void accept_conn_cb(struct evconnlistener *listener,
     p_trans->local_bev = local_bev;
     p_trans->srv_bev = srv_bev;
 
+    st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]]", 
+               slist_count(&cltopt.trans)); 
+
     /* 向服务器报告连接请求 */
     CTL_HEAD ret_head;
     memset(&ret_head, 0, CTL_HEAD_LEN);
@@ -530,6 +535,9 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
         bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
     bufferevent_setcb(srv_bev, bufferread_cb_enc, NULL, bufferevent_cb, p_trans); 
     //fferevent_enable(srv_bev, EV_READ|EV_WRITE);
+
+    st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]]", 
+               slist_count(&cltopt.trans)); 
 
 
     p_trans->l_port = atoi(sbuf);

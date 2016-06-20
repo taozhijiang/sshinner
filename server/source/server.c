@@ -23,6 +23,7 @@
 
 SRV_OPT srvopt;
 struct  event_base *main_base;
+struct  evdns_base *dnsbase;
 
 int main(int argc, char* argv[])
 {
@@ -89,6 +90,8 @@ int main(int argc, char* argv[])
     main_base = event_base_new_with_config(cfg);
     event_config_free(cfg);
 
+    dnsbase = evdns_base_new(main_base, 1);
+
     st_d_print("当前复用Event模式: %s", event_base_get_method(main_base)); // epoll
 
 
@@ -122,6 +125,8 @@ int main(int argc, char* argv[])
         RSA_free(srvopt.p_prikey);
 
     evconnlistener_free(listener); 
+
+    evdns_base_free(dnsbase, 0);
     event_base_free(main_base);
 
     st_d_print("Program terminated!");

@@ -129,7 +129,7 @@ RET_T sc_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,
     return RET_YES;
 }
 
-
+#if 0
 
 evutil_socket_t
 ss_get_tcp_socket_for_host(const char *hostname, ev_uint16_t port)
@@ -177,13 +177,13 @@ ss_get_tcp_socket_for_host(const char *hostname, ev_uint16_t port)
 
     return sock;
 }
+#endif
 
-
-evutil_socket_t ss_connect_srv(struct sockaddr_in* sin)
+int ss_connect_srv(struct sockaddr_in* sin)
 {
     int reuseaddr_on = 1;
 
-    evutil_socket_t sk_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int sk_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (sk_fd < 0)
         return -1;
 
@@ -200,5 +200,5 @@ evutil_socket_t ss_connect_srv(struct sockaddr_in* sin)
         return -1;
     }
     
-    return socket;
+    return sk_fd;
 }
