@@ -10,7 +10,7 @@
 #include "sshinner_c.h"
 
 
-void bufferread_cb_enc(struct bufferevent *bev, void *ptr)
+void ss5_bufferread_cb_enc(struct bufferevent *bev, void *ptr)
 {
     ENC_FRAME from_f;
     ENC_FRAME to_f;
@@ -60,6 +60,38 @@ void bufferread_cb_enc(struct bufferevent *bev, void *ptr)
     return;
 }
 
+void ss5_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
+{
+    P_PORTTRANS p_trans = (P_PORTTRANS)ptr; 
+    struct event_base *base = bufferevent_get_base(bev);
+
+    //只有使用bufferevent_socket_connect进行的连接才会得到CONNECTED的事件
+    if (events & BEV_EVENT_CONNECTED) 
+    {
+        st_d_print("GOT BEV_EVENT_CONNECTED event! ");
+    } 
+    else if (events & BEV_EVENT_ERROR) 
+    {
+        st_d_error("GOT BEV_EVENT_ERROR event[%d]! ", p_trans->l_port);
+
+        sc_free_trans(p_trans);
+    } 
+    else if (events & BEV_EVENT_EOF) 
+    {
+        st_d_error("GOT BEV_EVENT_EOF event[%d]! ", p_trans->l_port); 
+
+        sc_free_trans(p_trans);
+    }
+    else if (events & BEV_EVENT_TIMEOUT) 
+    {
+        st_d_error("GOT BEV_EVENT_TIMEOUT event[%d]! ", p_trans->l_port);
+
+        sc_free_trans(p_trans);
+    } 
+
+    return;
+}
+
 /**
  * 只会在DAEMON端调用 
  */
@@ -83,6 +115,7 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
     if (buf[0] != 0x05)
     {
         st_d_error("ONLY SUPPORT SS5: %x!", buf[0]);
+        close(fd);
         return;
     }
 
@@ -96,13 +129,15 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
         (buf[3] != 0x01 /*IP v4*/ && buf[3] != 0x03 /*DOMAINNAME*/ ))
     {
         st_d_error("FIX Request head check error！");
+        close(fd);
         return;
     }
 
-    int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if(sc_connect_srv(srv_fd) != RET_YES) 
+    P_C_ITEM p_c = (P_C_ITEM)calloc(sizeof(C_ITEM), 1);
+    if (!p_c)
     {
-        st_d_error("连接服务器失败！");
+        st_d_error("申请内存[%d]失败！", sizeof(C_ITEM));
+        close(fd);
         return;
     }
 
@@ -110,45 +145,22 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
     if (!p_trans)
     {
         st_d_error("本地无空闲TRANS!");
-        close(srv_fd);
+        close(fd);
         return;
     }
-    p_trans->l_port = atoi(sbuf);  //先占用
-
-    if (sc_daemon_ss5_init_srv(srv_fd, buf, p_trans->l_port) != RET_YES) 
-    {
-        p_trans->l_port = 0;
-        close(srv_fd);
-        st_d_error("服务器返回错误!");
-        return;
-    }
-
-    /* We got a new connection! Set up a bufferevent for it. */
-    struct event_base *base = evconnlistener_get_base(listener);
 
     p_trans->is_enc = 1;
-    encrypt_ctx_init(&p_trans->ctx_enc, atoi(sbuf), cltopt.enc_key, 1); 
-    encrypt_ctx_init(&p_trans->ctx_dec, atoi(sbuf), cltopt.enc_key, 0); 
+    p_trans->l_port = atoi(sbuf);  //先占用
 
-    evutil_make_socket_nonblocking(fd);
-    struct bufferevent *local_bev = 
-        bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-    assert(local_bev);
-    bufferevent_setcb(local_bev, bufferread_cb_enc, NULL, bufferevent_cb, p_trans);
-    //fferevent_enable(local_bev, EV_READ|EV_WRITE);
+    P_THREAD_OBJ p_threadobj  = sc_get_threadobj(p_trans->l_port); 
+    p_c->socket  = fd;
+    p_c->arg.ptr = p_trans;
+    memcpy(p_c->buf, buf, sizeof(p_c->buf));
 
-    evutil_make_socket_nonblocking(srv_fd);
-    struct bufferevent *srv_bev = 
-        bufferevent_socket_new(base, srv_fd, BEV_OPT_CLOSE_ON_FREE);
-    assert(srv_bev);
-    bufferevent_setcb(srv_bev, bufferread_cb_enc, NULL, bufferevent_cb, p_trans); 
-    //fferevent_enable(srv_bev, EV_READ|EV_WRITE);
 
-    st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]]", 
-               slist_count(&cltopt.trans)); 
+    slist_add(&p_c->list, &p_threadobj->conn_queue);
 
-    p_trans->local_bev = local_bev;
-    p_trans->srv_bev = srv_bev;
+    write(p_threadobj->notify_send_fd, "Q", 1);
 
     return;
 }

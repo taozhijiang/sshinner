@@ -28,6 +28,33 @@ enum CLT_TYPE {
     C_DAEMON, C_USR,
 };
 
+
+/* A connection queue. */
+typedef struct conn_item {
+    SLIST_HEAD      list;
+    int             socket;
+    union {
+        unsigned long dat;
+        void*         ptr;
+    } arg;
+    char            buf[512];
+}C_ITEM, *P_C_ITEM;
+
+struct event;
+typedef struct _thread_obj {
+    pthread_t       thread_id;        /* unique ID of this thread */
+    struct event_base *base;    /* libevent handle this thread uses */
+    struct event *p_notify_event;  /* listen event for notify pipe */
+    int notify_receive_fd;      /* receiving end of notify pipe */
+    int notify_send_fd;         /* sending end of notify pipe */
+
+    pthread_mutex_t q_lock;
+    SLIST_HEAD      conn_queue;    /* queue of new connections to handle */
+} THREAD_OBJ, *P_THREAD_OBJ;
+
+extern RET_T sc_create_ss5_worker_threads(size_t thread_num, P_THREAD_OBJ threads);
+
+
 /**
  * 采用本地和服务器数据直接单独连接
  */
@@ -39,8 +66,8 @@ typedef struct _portmap {
 
 // 实际传输时候的端口和bufferevent，为动态创建，动态关闭的
 typedef struct _porttrans {
-    SLIST_HEAD list;
-    unsigned short l_port;      //本地实际传输的端口
+    SLIST_HEAD          list;
+    unsigned short      l_port;      //本地实际传输的端口
     struct bufferevent *local_bev;
     struct bufferevent *srv_bev;
 
@@ -71,6 +98,12 @@ typedef struct _clt_opt
     unsigned char       enc_key[RC4_MD5_IV_LEN];
 
     PORTMAP             maps[MAX_PORT_NUM];
+
+    pthread_t           main_thread_id;
+    int                 thread_num;
+    P_THREAD_OBJ        thread_objs;
+
+    pthread_mutex_t     trans_lock;
     SLIST_HEAD          trans;
 }CLT_OPT, *P_CLT_OPT;
 
@@ -93,13 +126,16 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 void accept_conn_cb(struct evconnlistener *listener,
     evutil_socket_t fd, struct sockaddr *address, int socklen,
     void *ctx);
-void ss5_accept_conn_cb(struct evconnlistener *listener,
-    evutil_socket_t fd, struct sockaddr *address, int socklen,
-    void *ctx);
 void accept_error_cb(struct evconnlistener *listener, void *ctx);
 // 数据处理类函数
 void bufferread_cb(struct bufferevent *bev, void *ptr);
 
+
+void ss5_accept_conn_cb(struct evconnlistener *listener,
+    evutil_socket_t fd, struct sockaddr *address, int socklen,
+    void *ctx);
+void ss5_bufferread_cb_enc(struct bufferevent *bev, void *ptr);
+void ss5_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
 /**
  * 客户端与SRV的通信
@@ -124,5 +160,14 @@ extern P_PORTTRANS sc_find_trans(unsigned short l_sock);
 extern P_PORTTRANS sc_create_trans(unsigned short l_sock);
 extern RET_T sc_free_trans(P_PORTTRANS p_trans);
 extern RET_T sc_free_all_trans(void);
+
+
+/**
+ * 线程池索引的映射
+ */
+static inline P_THREAD_OBJ sc_get_threadobj(unsigned long salt)
+{
+    return (&cltopt.thread_objs[ (salt % cltopt.thread_num)] ); 
+}
 
 #endif

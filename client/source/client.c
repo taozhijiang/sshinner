@@ -158,6 +158,22 @@ int main(int argc, char* argv[])
 
     if (cltopt.C_TYPE == C_DAEMON && cltopt.ss5_port) 
     {
+        /**
+         * 目前只考虑将sockets5代理使用线程池来处理，其它的端口暴露 
+         * 基本都是长连接，不单独处理 
+         */
+        cltopt.thread_num = 10;
+
+        cltopt.main_thread_id = pthread_self(); 
+        cltopt.thread_objs = (P_THREAD_OBJ)calloc(sizeof(THREAD_OBJ), cltopt.thread_num);
+        if (!cltopt.thread_objs) 
+        {
+            SYS_ABORT("申请THREAD_OBJ出错");
+        }
+
+        sc_create_ss5_worker_threads(cltopt.thread_num, cltopt.thread_objs);
+
+
         encrypt_init(SD_ID128_CONST_STR(cltopt.mach_uuid), cltopt.enc_key);
 
         st_d_print("[DAEMON]创建sockets5代理端口：%d", cltopt.ss5_port); 
