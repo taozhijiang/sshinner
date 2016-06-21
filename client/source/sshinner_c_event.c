@@ -79,6 +79,7 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         {
             sc_find_daemon_portmap(head.daemonport, 1);
             P_PORTTRANS p_trans = sc_create_trans(head.extra_param); 
+            p_trans->is_enc = 0;
             
             if (!p_trans)
             {
@@ -169,7 +170,7 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     } 
     else if (events & BEV_EVENT_ERROR) 
     {
-        st_d_print("GOT BEV_EVENT_ERROR event! ");
+        st_d_error("GOT BEV_EVENT_ERROR event! ");
         loop_terminate_flag = 1;
     } 
     else if (events & BEV_EVENT_EOF) 
@@ -252,37 +253,23 @@ void bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     } 
     else if (events & BEV_EVENT_ERROR) 
     {
-        st_d_print("GOT BEV_EVENT_ERROR event! ");
-
-        //bufferevent_free(bev);
-        //event_base_loopexit(base, NULL);
+        st_d_error("GOT BEV_EVENT_ERROR event[%d]! ", p_trans->l_port);
 
         sc_free_trans(p_trans);
     } 
     else if (events & BEV_EVENT_EOF) 
     {
-        st_d_print("GOT BEV_EVENT_EOF event! ");
+        st_d_error("GOT BEV_EVENT_EOF event[%d]! ", p_trans->l_port); 
 
-        // 关闭对端
         sc_free_trans(p_trans);
 
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
-        st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
+        st_d_error("GOT BEV_EVENT_TIMEOUT event[%d]! ", p_trans->l_port);
 
         sc_free_trans(p_trans);
     } 
-    /*
-    else if (events & BEV_EVENT_READING) 
-    {
-        st_d_print("GOT BEV_EVENT_READING event! ");
-    } 
-    else if (events & BEV_EVENT_WRITING) 
-    {
-        st_d_print("GOT BEV_EVENT_WRITING event! ");
-    } 
-    */ 
 
     return;
 }

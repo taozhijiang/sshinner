@@ -32,38 +32,25 @@ void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     } 
     else if (events & BEV_EVENT_ERROR) 
     {
-        st_d_print("GOT BEV_EVENT_ERROR event! ");
-        //loop_terminate_flag = 1;
+        st_d_error("GOT BEV_EVENT_ERROR event[%d]! ", p_trans->usr_lport); 
 
         ss_free_trans(p_trans->p_activ_item, p_trans);
     } 
     else if (events & BEV_EVENT_EOF) 
     {
-        st_d_print("GOT BEV_EVENT_EOF event! ");
+        st_d_print("GOT BEV_EVENT_EOF event[%d]! ", p_trans->usr_lport); 
 
         // 实际传输端结束，那么只针对这个传输，把对端的连接断开，
         // 由于TCP连接，那么对端的be_usr_srv和be_daemon_srv也会收到BEV_EVENT_EOF消息
-
         ss_free_trans(p_trans->p_activ_item, p_trans);
 
     }
     else if (events & BEV_EVENT_TIMEOUT) 
     {
-        //st_d_print("GOT BEV_EVENT_TIMEOUT event! ");
+        st_d_print("GOT BEV_EVENT_TIMEOUT event[%d]! ", p_trans->usr_lport); 
 
         ss_free_trans(p_trans->p_activ_item, p_trans);
     } 
-
-    /*
-    else if (events & BEV_EVENT_READING) 
-    {
-        st_d_print("GOT BEV_EVENT_READING event! ");
-    } 
-    else if (events & BEV_EVENT_WRITING) 
-    {
-        st_d_print("GOT BEV_EVENT_WRITING event! ");
-    }
-    */
 
     if (loop_terminate_flag)
     {

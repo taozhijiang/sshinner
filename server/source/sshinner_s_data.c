@@ -188,7 +188,10 @@ extern P_TRANS_ITEM ss_create_trans(P_ACTIV_ITEM p_activ_item,
     }
 
     p_trans->usr_lport = l_sock;
+
+    pthread_mutex_lock(&p_activ_item->trans_lock);
     slist_add(&p_trans->list, &p_activ_item->trans); 
+    pthread_mutex_unlock(&p_activ_item->trans_lock);
 
     return p_trans;
 }
@@ -203,6 +206,14 @@ extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
         return RET_NO;
     }
 
+    pthread_mutex_lock(&p_activ_item->trans_lock);
+    slist_remove(&p_trans->list, &p_activ_item->trans); 
+    pthread_mutex_unlock(&p_activ_item->trans_lock);
+
+    st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 释放：[%d]",
+               slist_count(&p_activ_item->trans), p_trans->usr_lport); 
+    st_d_print("释放：%d", p_trans->usr_lport); 
+
     if (p_trans->bev_d) 
         bufferevent_free(p_trans->bev_d);
     if (p_trans->bev_u) 
@@ -214,7 +225,6 @@ extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
         encrypt_ctx_free(&p_trans->ctx_dec);
     }
 
-    slist_remove(&p_trans->list, &p_activ_item->trans); 
     free(p_trans);
 
     return RET_YES;
@@ -229,6 +239,7 @@ extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item)
     if (!p_activ_item || slist_empty(&p_activ_item->trans)) 
         return RET_YES;
 
+    pthread_mutex_lock(&p_activ_item->trans_lock);
     slist_for_each_safe(pos, n, &p_activ_item->trans)
     {
         p_trans = list_entry(pos, TRANS_ITEM, list); 
@@ -247,6 +258,7 @@ extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item)
         slist_remove(&p_trans->list, &p_activ_item->trans); 
         free(p_trans);
     }
+    pthread_mutex_unlock(&p_activ_item->trans_lock);
 
     return RET_YES;
 }

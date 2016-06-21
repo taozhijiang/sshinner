@@ -54,6 +54,7 @@ typedef struct _activ_item {
     struct bufferevent *bev_daemon; // 控制信息传输通道
     struct bufferevent *bev_usr;
     unsigned char      enc_key[RC4_MD5_KEY_LEN]; 
+    pthread_mutex_t    trans_lock;
     SLIST_HEAD         trans;
     unsigned long      pkg_cnt;    // 转发的数据包计数
 

@@ -1,7 +1,7 @@
 {
     "server":
     {
-         "thread_num": 5,
+         "thread_num": 20,
 		"port": 8900,
     },
 }

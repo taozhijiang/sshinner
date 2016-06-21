@@ -24,8 +24,7 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     } 
     else if (events & BEV_EVENT_ERROR) 
     {
-        st_d_print("GOT BEV_EVENT_ERROR event! ");
-        loop_terminate_flag = 1;
+        st_d_error("GOT BEV_EVENT_ERROR event! ");
     } 
     else if (events & BEV_EVENT_EOF) 
     {
@@ -368,6 +367,7 @@ static RET_T ss_main_handle_init(struct bufferevent *bev,
         p_activ_item->p_acct = p_acct_item; 
         p_activ_item->base =   srvopt.main_base; 
         p_activ_item->mach_uuid = p_head->mach_uuid;
+        pthread_mutex_init(&p_activ_item->trans_lock);
 
         encrypt_init(SD_ID128_CONST_STR(p_activ_item->mach_uuid), p_activ_item->enc_key); 
 

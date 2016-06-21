@@ -234,6 +234,11 @@ extern RET_T sc_free_trans(P_PORTTRANS p_trans)
         return RET_NO;
     }
 
+    slist_remove(&p_trans->list, &cltopt.trans); 
+
+    st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 释放：[%d]",
+               slist_count(&cltopt.trans), p_trans->l_port); 
+
     if (p_trans->srv_bev)
         bufferevent_free(p_trans->srv_bev);
     if (p_trans->local_bev) 
@@ -245,7 +250,6 @@ extern RET_T sc_free_trans(P_PORTTRANS p_trans)
         encrypt_ctx_free(&p_trans->ctx_enc);
     }
 
-    slist_remove(&p_trans->list, &cltopt.trans); 
     free(p_trans);
 
     return RET_YES;
@@ -270,6 +274,13 @@ extern RET_T sc_free_all_trans(void)
             bufferevent_free(p_trans->srv_bev);
         if (p_trans->local_bev) 
             bufferevent_free(p_trans->local_bev);
+
+        if (p_trans->is_enc) 
+        {
+            encrypt_ctx_free(&p_trans->ctx_enc);
+            encrypt_ctx_free(&p_trans->ctx_enc);
+        }
+
         slist_remove(&p_trans->list, &cltopt.trans); 
         free(p_trans);
     }
