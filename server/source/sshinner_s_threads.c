@@ -230,6 +230,14 @@ static void *thread_run(void *arg)
  * Processes an incoming "handle a new connection" item. This is called when
  * input arrives on the libevent wakeup pipe.
  */
+
+/**
+ * 这里有一个竞争条件：如果这里不能建立libevent连接，或者发送HD_CMD_SS5_ACT之前就收到了 
+ * EOF的事件，那么客户端就会存在一个僵尸的trans连接，客户端目前是单线程的，必须消除这种 
+ * 消耗 
+ *  
+ * 目前想到的处理方式就是，在拆除trans的同时，额外的向客户端主通道发送一个命令 
+ */
 static void thread_process(int fd, short which, void *arg) 
 {
     P_THREAD_OBJ p_threadobj = (P_THREAD_OBJ)arg; 
@@ -345,7 +353,6 @@ static void thread_process(int fd, short which, void *arg)
                 remote_socket = ss_connect_srv(&sin);
                 if (remote_socket == -1)
                 {
-                    free(p_trans->dat);
                     free(p_c_item);
                     st_d_error("CONNECT ERROR!");
                     return;
@@ -403,12 +410,14 @@ static void thread_process(int fd, short which, void *arg)
             evutil_make_socket_nonblocking(p_c_item->socket);
             struct bufferevent *new_bev = 
                 bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
+            assert(new_bev);
             bufferevent_setcb(new_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
             bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
             evutil_make_socket_nonblocking(remote_socket);
             struct bufferevent *new_ext_bev = 
                 bufferevent_socket_new(p_threadobj->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
+            assert(new_ext_bev);
             bufferevent_setcb(new_ext_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
             bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
 
@@ -435,7 +444,6 @@ static void thread_process(int fd, short which, void *arg)
 
     return;
 }
-
 
 void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr)
 {
@@ -471,12 +479,14 @@ void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr)
                 evutil_make_socket_nonblocking(p_dns->p_c_item->socket);
                 struct bufferevent *new_bev = 
                     bufferevent_socket_new(p_dns->p_threadobj->base, p_dns->p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
+                assert(new_bev);
                 bufferevent_setcb(new_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_dns->p_trans);
                 bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
                 evutil_make_socket_nonblocking(remote_socket);
                 struct bufferevent *new_ext_bev = 
                     bufferevent_socket_new(p_dns->p_threadobj->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
+                assert(new_ext_bev);
                 bufferevent_setcb(new_ext_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_dns->p_trans);
                 bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
 
@@ -509,6 +519,31 @@ void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr)
 
     free(p_dns->p_c_item);
     free(p_dns);
+
+    return;
+}
+
+
+/**
+ * 
+ * 用主管道命令的方式，发送结束TRANS信息 
+ * 多次调用该命令是无害的，因为客户端检测不到对应的trans就忽略之 
+ */
+void ss_cmd_end_trans(P_TRANS_ITEM p_trans)
+{
+    if (!p_trans || !p_trans->p_activ_item || !p_trans->p_activ_item->bev_daemon) 
+    {
+        return;
+    }
+
+    CTL_HEAD head;
+    memset(&head, 0, CTL_HEAD_LEN);
+
+    head.direct = USR_DAEMON; 
+    head.cmd = HD_CMD_END_TRANS; 
+    head.extra_param = p_trans->usr_lport; 
+    head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
+    bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
 
     return;
 }

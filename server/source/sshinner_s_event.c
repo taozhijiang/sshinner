@@ -523,7 +523,6 @@ static RET_T ss_main_handle_ss5(struct bufferevent *bev,
     if (!p_trans)
     {
         st_d_error("TRANS队列已满！");
-        free(dat);
         return RET_NO;
     }
 

@@ -158,7 +158,6 @@ int main(int argc, char* argv[])
 
     if (cltopt.C_TYPE == C_DAEMON && cltopt.ss5_port) 
     {
-
         encrypt_init(SD_ID128_CONST_STR(cltopt.mach_uuid), cltopt.enc_key);
 
         st_d_print("[DAEMON]创建sockets5代理端口：%d", cltopt.ss5_port); 
@@ -171,7 +170,7 @@ int main(int argc, char* argv[])
         sin.sin_port = htons(cltopt.ss5_port); /* Port Num */
 
         listener = evconnlistener_new_bind(base, ss5_accept_conn_cb, NULL,
-                LEV_OPT_LEAVE_SOCKETS_BLOCKING/* 不阻塞 */|LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, 
+                LEV_OPT_LEAVE_SOCKETS_BLOCKING/* 阻塞 */|LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, 
                 -1/*backlog 连接无限制*/,
                 (struct sockaddr*)&sin, sizeof(sin));
 

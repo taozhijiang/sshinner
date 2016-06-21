@@ -212,7 +212,6 @@ extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
 
     st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 释放：[%d]",
                slist_count(&p_activ_item->trans), p_trans->usr_lport); 
-    st_d_print("释放：%d", p_trans->usr_lport); 
 
     if (p_trans->bev_d) 
         bufferevent_free(p_trans->bev_d);
@@ -225,7 +224,10 @@ extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
         encrypt_ctx_free(&p_trans->ctx_dec);
     }
 
+    ss_cmd_end_trans(p_trans);
+
     free(p_trans);
+
 
     return RET_YES;
 }

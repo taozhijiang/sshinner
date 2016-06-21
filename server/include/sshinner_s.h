@@ -150,7 +150,7 @@ extern void ss_ret_cmd_ok(struct bufferevent *bev,
                           sd_id128_t uuid, enum DIREC direct);
 extern void ss_ret_cmd_err(struct bufferevent *bev,
                            sd_id128_t uuid, enum DIREC direct);
-
+extern void ss_cmd_end_trans(P_TRANS_ITEM p_trans);
 
 extern SRV_OPT srvopt;
 
