@@ -101,6 +101,9 @@ void accept_conn_cb(struct evconnlistener *listener,
     struct bufferevent *bev = 
         bufferevent_socket_new(base, fd, 0 /*BEV_OPT_CLOSE_ON_FREE*/);
 
+    unsigned int optval = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
+
     /**
      * 对于服务端，一般都是阻塞在读，而如果要写，一般在read_cb中写回就可以了 
      */

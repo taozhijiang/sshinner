@@ -58,7 +58,24 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         if (p_trans) 
         {
             st_d_print("EXTRA CLOSE TRANS: %d", head.extra_param);
-            sc_free_trans(p_trans);
+
+            pthread_mutex_lock(&cltopt.trans_lock);
+            if (p_trans->srv_bev)
+            {
+                bufferevent_free(p_trans->srv_bev);
+                p_trans->srv_bev = NULL;
+            }
+            if (p_trans->local_bev) 
+            {
+                bufferevent_free(p_trans->local_bev);
+                p_trans->local_bev = NULL;
+            }
+            pthread_mutex_unlock(&cltopt.trans_lock);
+
+        }
+        else
+        {
+            st_d_error("本地未找到连接信息：%d", head.extra_param);
         }
     }
     if (head.cmd == HD_CMD_SS5_ACT) 
@@ -70,7 +87,9 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
         P_PORTTRANS p_trans = sc_find_trans(head.extra_param); 
         if (!p_trans) 
         {
-            SYS_ABORT("本地SS5未找到连接信息：%d", head.extra_param);
+            // 也有可能先被释放了
+            st_d_error("本地SS5未找到连接信息：%d", head.extra_param);
+            return;
         }
 
         bufferevent_enable(p_trans->local_bev, EV_READ|EV_WRITE);
@@ -98,6 +117,9 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 
             /*建立本地连接*/
             int local_fd = socket(AF_INET, SOCK_STREAM, 0);
+            unsigned int optval = 1;
+            setsockopt(local_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
+
             int reuseaddr_on = 1;
             if (setsockopt(local_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
                 sizeof(reuseaddr_on)) == -1)
@@ -201,9 +223,7 @@ void srv_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
             sc_free_all_trans();
             st_d_print("DAEMON端重连服务器！");
 
-            int srv_fd;
-            srv_fd = socket(AF_INET, SOCK_STREAM, 0);
-
+            int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
             if (sc_connect_srv(srv_fd) != RET_YES)
             {
                 st_d_error("连接服务器失败！");
@@ -319,6 +339,9 @@ void accept_conn_cb(struct evconnlistener *listener,
     struct event_base *base = evconnlistener_get_base(listener);
 
     int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    unsigned int optval = 1;
+    setsockopt(srv_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
     if(sc_connect_srv(srv_fd) != RET_YES) 
     {
         st_d_error("连接服务器失败！");

@@ -124,8 +124,10 @@ static void thread_process(int fd, short which, void *arg)
 
     switch (buf[0]) 
     {
-        case 'Q': 
+    case 'Q': 
+            pthread_mutex_lock(&p_threadobj->q_lock);
             p_list = slist_fetch(&p_threadobj->conn_queue);
+            pthread_mutex_unlock(&p_threadobj->q_lock);
             if (!p_list)
             {
                 st_d_error("无法从任务队列中获取任务！");
@@ -139,13 +141,16 @@ static void thread_process(int fd, short which, void *arg)
             if(sc_connect_srv(srv_fd) != RET_YES) 
             {
                 st_d_error("连接服务器失败！");
+                sc_free_trans(p_trans);
+                free(p_c_item);
                 return;
             }
 
             if (sc_daemon_ss5_init_srv(srv_fd, p_c_item->buf, p_trans->l_port) != RET_YES) 
             {
-                p_trans->l_port = 0;
                 close(srv_fd);
+                sc_free_trans(p_trans);
+                free(p_c_item);
                 st_d_error("服务器返回错误!");
                 return;
             }
@@ -160,10 +165,11 @@ static void thread_process(int fd, short which, void *arg)
             evutil_make_socket_nonblocking(srv_fd); 
             struct bufferevent *new_bev = 
                 bufferevent_socket_new(p_threadobj->base, srv_fd, BEV_OPT_CLOSE_ON_FREE); 
+            assert(new_bev);
             bufferevent_setcb(new_bev, ss5_bufferread_cb_enc, NULL, ss5_bufferevent_cb, p_trans); 
-            bufferevent_enable(new_bev, EV_READ|EV_WRITE);
+            //bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
-
+            assert(p_trans->is_enc);
             encrypt_ctx_init(&p_trans->ctx_enc, p_trans->l_port, cltopt.enc_key, 1); 
             encrypt_ctx_init(&p_trans->ctx_dec, p_trans->l_port, cltopt.enc_key, 0);
 
@@ -171,6 +177,11 @@ static void thread_process(int fd, short which, void *arg)
             p_trans->srv_bev = new_bev;
 
             st_d_print("THREAD FOR (%d) OK!", p_trans->l_port); 
+
+            st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 已增加：[%d]",
+               slist_count(&cltopt.trans), p_trans->l_port);
+
+            free(p_c_item);
 
             break;
 

@@ -22,7 +22,7 @@ void ss5_bufferread_cb_enc(struct bufferevent *bev, void *ptr)
 
     if (bev == p_trans->local_bev && p_trans->srv_bev) 
     {
-        st_d_print("加密转发数据包LOCAL->SRV");    // 解密
+        //st_d_print("加密转发数据包LOCAL->SRV");    // 解密
 
         // 加密
         from_f.len = bufferevent_read(p_trans->local_bev, from_f.dat, FRAME_SIZE); 
@@ -38,7 +38,7 @@ void ss5_bufferread_cb_enc(struct bufferevent *bev, void *ptr)
     }
     else if (bev == p_trans->srv_bev && p_trans->local_bev) 
     {
-        st_d_print("加密转发数据包SRV->LOCAL");    // 解密
+        //st_d_print("加密转发数据包SRV->LOCAL");    // 解密
 
         // 解密
         from_f.len = bufferevent_read(p_trans->srv_bev, from_f.dat, FRAME_SIZE);
@@ -79,7 +79,6 @@ void ss5_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
     else if (events & BEV_EVENT_EOF) 
     {
         st_d_error("GOT BEV_EVENT_EOF event[%d]! ", p_trans->l_port); 
-
         sc_free_trans(p_trans);
     }
     else if (events & BEV_EVENT_TIMEOUT) 
@@ -100,7 +99,7 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
     void *ctx)
 {
     char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
-    char buf[512];
+    char buf[260];
 
     getnameinfo (address, socklen,
                hbuf, sizeof(hbuf),sbuf, sizeof(sbuf),
@@ -111,6 +110,10 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
     /** 读取代理参数*/
     // blocking socket here!
     memset(buf, 0, sizeof(buf));
+
+    unsigned int optval = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
+
     read(fd, buf, sizeof(buf)); //actually 1+1+1~255
     if (buf[0] != 0x05)
     {
@@ -158,7 +161,9 @@ void ss5_accept_conn_cb(struct evconnlistener *listener,
     memcpy(p_c->buf, buf, sizeof(p_c->buf));
 
 
+    pthread_mutex_lock(&p_threadobj->q_lock);
     slist_add(&p_c->list, &p_threadobj->conn_queue);
+    pthread_mutex_unlock(&p_threadobj->q_lock);
 
     write(p_threadobj->notify_send_fd, "Q", 1);
 

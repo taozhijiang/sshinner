@@ -77,12 +77,12 @@ void thread_bufferread_cb(struct bufferevent *bev, void *ptr)
 
     if (bev == p_trans->bev_u && p_trans->bev_d) 
     {
-        st_d_print("转发数据包USR->DAEMON");
+        //st_d_print("转发数据包USR->DAEMON");
         bufferevent_write_buffer(p_trans->bev_d, bufferevent_get_input(bev));
     }
     else if (bev == p_trans->bev_d && p_trans->bev_u) 
     {
-        st_d_print("转发数据包DAEMON->USR");
+        //st_d_print("转发数据包DAEMON->USR");
         bufferevent_write_buffer(p_trans->bev_u, bufferevent_get_input(bev));
     }
     else
@@ -105,7 +105,7 @@ void thread_bufferread_cb_enc(struct bufferevent *bev, void *ptr)
 
     if (bev == p_trans->bev_u && p_trans->bev_d) 
     {
-        st_d_print("加密转发数据包USR->REMOTE");    // 解密
+        //st_d_print("加密转发数据包USR->REMOTE");    // 解密
 
         from_f.len = bufferevent_read(p_trans->bev_u, from_f.dat, FRAME_SIZE); 
         if (from_f.len > 0)
@@ -121,7 +121,7 @@ void thread_bufferread_cb_enc(struct bufferevent *bev, void *ptr)
     }
     else if (bev == p_trans->bev_d && p_trans->bev_u) 
     {
-        st_d_print("加密转发数据包REMOTE->USR");    // 加密
+        //st_d_print("加密转发数据包REMOTE->USR");    // 加密
 
         from_f.len = bufferevent_read(p_trans->bev_d, from_f.dat, FRAME_SIZE);
         if (from_f.len > 0)
@@ -270,7 +270,6 @@ static void thread_process(int fd, short which, void *arg)
             new_bev = 
                 bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
             bufferevent_setcb(new_bev, thread_bufferread_cb, NULL, thread_bufferevent_cb, p_trans);
-            bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
             p_trans->bev_d = new_bev;
             free(p_c_item);
@@ -294,6 +293,8 @@ static void thread_process(int fd, short which, void *arg)
             head.direct = DAEMON_USR; 
             bufferevent_write(p_trans->p_activ_item->bev_usr, &head, CTL_HEAD_LEN); 
 
+            // never too late to enable it!
+            bufferevent_enable(new_bev, EV_READ|EV_WRITE);
             break;
 
         case 'U':   //USR->DAEMON
@@ -353,6 +354,7 @@ static void thread_process(int fd, short which, void *arg)
                 remote_socket = ss_connect_srv(&sin);
                 if (remote_socket == -1)
                 {
+                    close(p_c_item->socket);
                     free(p_c_item);
                     st_d_error("CONNECT ERROR!");
                     return;
@@ -371,6 +373,7 @@ static void thread_process(int fd, short which, void *arg)
                 if (!p_dns)
                 {
                     st_d_error("申请内存失败：%d", sizeof(DNS_STRUCT));
+                    close(p_c_item->socket);
                     free(p_c_item);
                     return;
                 }
@@ -407,23 +410,22 @@ static void thread_process(int fd, short which, void *arg)
                 return;
             }
 
+            free(p_c_item);
+
             evutil_make_socket_nonblocking(p_c_item->socket);
             struct bufferevent *new_bev = 
                 bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
             assert(new_bev);
             bufferevent_setcb(new_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
-            bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
             evutil_make_socket_nonblocking(remote_socket);
             struct bufferevent *new_ext_bev = 
                 bufferevent_socket_new(p_threadobj->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
             assert(new_ext_bev);
             bufferevent_setcb(new_ext_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
-            bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
 
             p_trans->bev_d = new_bev;
             p_trans->bev_u = new_ext_bev;
-            free(p_c_item);
 
             st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 任务队列：[[ %d ]]", 
                        slist_count(&p_trans->p_activ_item->trans), slist_count(&p_threadobj->conn_queue)); 
@@ -434,7 +436,13 @@ static void thread_process(int fd, short which, void *arg)
             head.cmd = HD_CMD_SS5_ACT; 
             head.extra_param = p_trans->usr_lport; 
             head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
+
+            assert(p_trans->p_activ_item->bev_daemon);
             bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
+
+            // never too late to enable it!
+            bufferevent_enable(new_bev, EV_READ|EV_WRITE);
+            bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
             break;
 
     default:
@@ -451,7 +459,7 @@ void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr)
 
     if (errcode) 
     {
-        printf("Query error for: %s -> %s\n", p_dns->hostname, evutil_gai_strerror(errcode)); 
+        printf("DNS Query error for: %s -> %s\n", p_dns->hostname, evutil_gai_strerror(errcode)); 
     }
     else
     {
@@ -481,14 +489,12 @@ void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr)
                     bufferevent_socket_new(p_dns->p_threadobj->base, p_dns->p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
                 assert(new_bev);
                 bufferevent_setcb(new_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_dns->p_trans);
-                bufferevent_enable(new_bev, EV_READ|EV_WRITE);
 
                 evutil_make_socket_nonblocking(remote_socket);
                 struct bufferevent *new_ext_bev = 
                     bufferevent_socket_new(p_dns->p_threadobj->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
                 assert(new_ext_bev);
                 bufferevent_setcb(new_ext_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_dns->p_trans);
-                bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
 
                 p_dns->p_trans->bev_d = new_bev;
                 p_dns->p_trans->bev_u = new_ext_bev;
@@ -498,14 +504,21 @@ void dns_query_cb(int errcode, struct evutil_addrinfo *addr, void *ptr)
                            slist_count(&p_dns->p_threadobj->conn_queue)); 
 
 
-                st_d_print("SS5激活客户端Bufferevent使能！");
                 CTL_HEAD head;
                 memset(&head, 0, CTL_HEAD_LEN);
                 head.direct = USR_DAEMON; 
                 head.cmd = HD_CMD_SS5_ACT; 
                 head.extra_param = p_dns->p_trans->usr_lport; 
                 head.mach_uuid = p_dns->p_trans->p_activ_item->mach_uuid; 
-                bufferevent_write(p_dns->p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
+
+                assert(p_dns->p_trans->p_activ_item->bev_daemon);
+                //bufferevent_write(p_dns->p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
+                write(bufferevent_getfd(p_dns->p_trans->p_activ_item->bev_daemon), &head, CTL_HEAD_LEN);
+
+                st_d_print("SS5激活客户端Bufferevent使能 %d！", p_dns->p_trans->usr_lport); 
+                // never too late to enable it!
+                bufferevent_enable(new_bev, EV_READ|EV_WRITE);
+                bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
 
                 break;
 
@@ -533,7 +546,7 @@ void ss_cmd_end_trans(P_TRANS_ITEM p_trans)
 {
     if (!p_trans || !p_trans->p_activ_item || !p_trans->p_activ_item->bev_daemon) 
     {
-        return;
+        SYS_ABORT("NOT SUITE FOR SEND CMD!!!");
     }
 
     CTL_HEAD head;
@@ -543,6 +556,8 @@ void ss_cmd_end_trans(P_TRANS_ITEM p_trans)
     head.cmd = HD_CMD_END_TRANS; 
     head.extra_param = p_trans->usr_lport; 
     head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
+
+    assert(p_trans->p_activ_item->bev_daemon);
     bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
 
     return;

@@ -92,8 +92,9 @@ int main(int argc, char* argv[])
     event_config_free(cfg);
 
     srvopt.evdns_base = evdns_base_new(srvopt.main_base, 1); 
-    evdns_base_nameserver_ip_add(srvopt.evdns_base, "127.0.0.1");
-    evdns_base_nameserver_ip_add(srvopt.evdns_base, "8.8.8.8");
+    //evdns_base_nameserver_ip_add(srvopt.evdns_base, "8.8.8.8");
+    //evdns_base_nameserver_ip_add(srvopt.evdns_base, "8.8.4.4");
+    //evdns_base_nameserver_ip_add(srvopt.evdns_base, "10.0.0.1");
 
     st_d_print("当前复用Event模式: %s", event_base_get_method(srvopt.main_base)); // epoll
 

@@ -220,7 +220,10 @@ extern P_PORTTRANS sc_create_trans(unsigned short l_sock)
     p_trans->l_port = l_sock;
     p_trans->local_bev = NULL;
     p_trans->srv_bev = NULL;
+    
+    pthread_mutex_lock(&cltopt.trans_lock);
     slist_add(&p_trans->list, &cltopt.trans); 
+    pthread_mutex_unlock(&cltopt.trans_lock);
 
     return p_trans;
 }
@@ -234,15 +237,23 @@ extern RET_T sc_free_trans(P_PORTTRANS p_trans)
         return RET_NO;
     }
 
-    slist_remove(&p_trans->list, &cltopt.trans); 
-
+    pthread_mutex_lock(&cltopt.trans_lock);
+    slist_remove(&p_trans->list, &cltopt.trans);
     st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 释放：[%d]",
                slist_count(&cltopt.trans), p_trans->l_port); 
+    p_trans->l_port = 0;
+    pthread_mutex_unlock(&cltopt.trans_lock);
 
     if (p_trans->srv_bev)
+    {
         bufferevent_free(p_trans->srv_bev);
+        p_trans->srv_bev = NULL;
+    }
     if (p_trans->local_bev) 
+    {
         bufferevent_free(p_trans->local_bev);
+        p_trans->local_bev = NULL;
+    }
 
     if (p_trans->is_enc) 
     {
@@ -260,8 +271,12 @@ extern RET_T sc_free_all_trans(void)
     P_PORTTRANS p_trans = NULL;
     P_SLIST_HEAD pos = NULL, n = NULL; 
 
+    pthread_mutex_lock(&cltopt.trans_lock);
+
     if (slist_empty(&cltopt.trans))
     {
+
+        pthread_mutex_unlock(&cltopt.trans_lock);
         return RET_YES;
     }
 
@@ -284,6 +299,7 @@ extern RET_T sc_free_all_trans(void)
         slist_remove(&p_trans->list, &cltopt.trans); 
         free(p_trans);
     }
+    pthread_mutex_unlock(&cltopt.trans_lock);
 
     return RET_YES;
 }
@@ -562,6 +578,9 @@ RET_T sc_send_head_cmd(int cmd, unsigned long extra_param,
 RET_T sc_connect_srv(int srv_fd)
 {
     int reuseaddr_on = 1;
+
+    unsigned int optval = 1;
+    setsockopt(srv_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
 
     if (setsockopt(srv_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
 		sizeof(reuseaddr_on)) == -1)

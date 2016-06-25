@@ -187,6 +187,9 @@ int ss_connect_srv(struct sockaddr_in* sin)
     if (sk_fd < 0)
         return -1;
 
+    unsigned int optval = 1;
+    setsockopt(sk_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
+
     if (setsockopt(sk_fd, SOL_SOCKET, SO_REUSEADDR, &reuseaddr_on, 
 		sizeof(reuseaddr_on)) == -1)
     {

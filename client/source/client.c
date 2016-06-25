@@ -99,6 +99,9 @@ int main(int argc, char* argv[])
 
     /*连接服务器*/
     int srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+    unsigned int optval = 1;
+    setsockopt(srv_fd, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
+
     if(sc_connect_srv(srv_fd) != RET_YES) 
     {
         SYS_ABORT("连接服务器失败！");
@@ -162,7 +165,7 @@ int main(int argc, char* argv[])
          * 目前只考虑将sockets5代理使用线程池来处理，其它的端口暴露 
          * 基本都是长连接，不单独处理 
          */
-        cltopt.thread_num = 10;
+        cltopt.thread_num = 5;
 
         cltopt.main_thread_id = pthread_self(); 
         cltopt.thread_objs = (P_THREAD_OBJ)calloc(sizeof(THREAD_OBJ), cltopt.thread_num);

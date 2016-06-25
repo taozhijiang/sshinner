@@ -3,6 +3,8 @@
 
 #include <zlib.h>
 
+#include <netinet/in.h>
+#include <netinet/tcp.h> // for TCP_NODELAY
 
 #define FRAME_SIZE 4096
 #define LOAD_SIZE (FRAME_SIZE-RC4_MD5_IV_LEN)

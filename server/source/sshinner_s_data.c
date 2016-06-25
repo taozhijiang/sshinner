@@ -1,6 +1,8 @@
 #include "rbtree.h"
 #include "sshinner_s.h"
 
+#include <assert.h>
+
 extern P_ACCT_ITEM  ss_find_acct_item(P_SRV_OPT p_srvopt, 
                                       const char* username, unsigned long userid)
 {
@@ -206,17 +208,36 @@ extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
         return RET_NO;
     }
 
+    CTL_HEAD head;
+    memset(&head, 0, CTL_HEAD_LEN);
+
+    head.direct = USR_DAEMON; 
+    head.cmd = HD_CMD_END_TRANS; 
+    head.extra_param = p_trans->usr_lport; 
+    head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
+
     pthread_mutex_lock(&p_activ_item->trans_lock);
     slist_remove(&p_trans->list, &p_activ_item->trans); 
-    pthread_mutex_unlock(&p_activ_item->trans_lock);
 
     st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 释放：[%d]",
                slist_count(&p_activ_item->trans), p_trans->usr_lport); 
 
+    p_trans->usr_lport = 0;
+    pthread_mutex_unlock(&p_activ_item->trans_lock);
+
+
     if (p_trans->bev_d) 
+    {
         bufferevent_free(p_trans->bev_d);
+        p_trans->bev_d = NULL;
+    }
+
     if (p_trans->bev_u) 
+    {
         bufferevent_free(p_trans->bev_u);
+        p_trans->bev_u = NULL;
+    }
+
 
     if (p_trans->is_enc) 
     {
@@ -224,10 +245,10 @@ extern RET_T ss_free_trans(P_ACTIV_ITEM p_activ_item, P_TRANS_ITEM p_trans)
         encrypt_ctx_free(&p_trans->ctx_dec);
     }
 
-    ss_cmd_end_trans(p_trans);
+    assert(p_trans->p_activ_item->bev_daemon);
+    //bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN);  
 
     free(p_trans);
-
 
     return RET_YES;
 }
@@ -238,10 +259,14 @@ extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item)
     P_TRANS_ITEM p_trans = NULL;
     P_SLIST_HEAD pos = NULL, n = NULL; 
 
-    if (!p_activ_item || slist_empty(&p_activ_item->trans)) 
-        return RET_YES;
-
     pthread_mutex_lock(&p_activ_item->trans_lock);
+
+    if (!p_activ_item || slist_empty(&p_activ_item->trans)) 
+    {
+        pthread_mutex_unlock(&p_activ_item->trans_lock);
+        return RET_YES;
+    }
+
     slist_for_each_safe(pos, n, &p_activ_item->trans)
     {
         p_trans = list_entry(pos, TRANS_ITEM, list); 
@@ -260,6 +285,7 @@ extern RET_T ss_free_all_trans(P_ACTIV_ITEM p_activ_item)
         slist_remove(&p_trans->list, &p_activ_item->trans); 
         free(p_trans);
     }
+
     pthread_mutex_unlock(&p_activ_item->trans_lock);
 
     return RET_YES;

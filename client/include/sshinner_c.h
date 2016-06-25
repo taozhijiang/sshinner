@@ -37,7 +37,7 @@ typedef struct conn_item {
         unsigned long dat;
         void*         ptr;
     } arg;
-    char            buf[512];
+    char            buf[260];
 }C_ITEM, *P_C_ITEM;
 
 struct event;
