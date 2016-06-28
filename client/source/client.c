@@ -220,11 +220,11 @@ int main(int argc, char* argv[])
             exit(EXIT_FAILURE);
         }
 
-        evutil_make_socket_closeonexec(dns_socket);
-        evutil_make_socket_nonblocking(dns_socket);
         unsigned int optval = 1;
         setsockopt(dns_socket, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
         setsockopt(dns_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+        evutil_make_socket_closeonexec(dns_socket);
+        evutil_make_socket_nonblocking(dns_socket);
 
         struct sockaddr_in sin;
         memset(&sin, 0, sizeof(sin));

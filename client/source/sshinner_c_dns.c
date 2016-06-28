@@ -16,9 +16,10 @@ void dns_client_to_proxy_cb(evutil_socket_t socket_fd, short ev_flags, void * pt
 
     struct sockaddr_in sin;
     memset(&sin, 0, sizeof(sin));
-    socklen_t len; 
+    socklen_t len = sizeof(sin); 
 
-    int nread = recvfrom(socket_fd, (void *)from_f.dat, sizeof(from_f.dat), 
+    /*这个len是输入输出参数，所以必须先初始化*/
+    int nread = recvfrom(socket_fd, (void *)from_f.dat, 4096, 
                          0, (struct sockaddr *)&sin, &len);
 
     if (nread > 0)
