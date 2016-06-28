@@ -158,8 +158,9 @@ int main(int argc, char* argv[])
         }
     }
     
+    encrypt_init(SD_ID128_CONST_STR(cltopt.mach_uuid), cltopt.enc_key);
 
-    if (cltopt.C_TYPE == C_DAEMON && cltopt.ss5_port) 
+    if (cltopt.C_TYPE == C_DAEMON && cltopt.ss5_port ) 
     {
         /**
          * 目前只考虑将sockets5代理使用线程池来处理，其它的端口暴露 
@@ -174,10 +175,8 @@ int main(int argc, char* argv[])
             SYS_ABORT("申请THREAD_OBJ出错");
         }
 
-        sc_create_ss5_worker_threads(cltopt.thread_num, cltopt.thread_objs);
 
-
-        encrypt_init(SD_ID128_CONST_STR(cltopt.mach_uuid), cltopt.enc_key);
+        sc_create_ss5_worker_threads(cltopt.thread_num, cltopt.thread_objs); 
 
         st_d_print("[DAEMON]创建sockets5代理端口：%d", cltopt.ss5_port); 
 
@@ -201,8 +200,83 @@ int main(int argc, char* argv[])
         evconnlistener_set_error_cb(listener, accept_error_cb);
 
         st_d_print("[DAEMON]sockets5代理创建侦听套接字OK %d", cltopt.ss5_port); 
+
     }
 
+
+
+    if (cltopt.C_TYPE == C_DAEMON && cltopt.dns_port) 
+    {
+        st_d_print("[DAEMON]创建DNS代理端口：%d", cltopt.dns_port); 
+        if (cltopt.dns_port != 53) 
+        {
+            st_d_print("[DAEMON]请注意标准DNS侦听#53端口！");
+        }
+
+        int dns_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (dns_socket < 0 )
+        {
+            st_d_error("Create DNS socket error!");
+            exit(EXIT_FAILURE);
+        }
+
+        evutil_make_socket_closeonexec(dns_socket);
+        evutil_make_socket_nonblocking(dns_socket);
+        unsigned int optval = 1;
+        setsockopt(dns_socket, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
+        setsockopt(dns_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
+
+        struct sockaddr_in sin;
+        memset(&sin, 0, sizeof(sin));
+        sin.sin_family = AF_INET;
+        sin.sin_addr.s_addr = htonl(0);
+        sin.sin_port = htons(cltopt.dns_port); /* Port Num */
+
+        if (bind(dns_socket, (struct sockaddr *)&sin, sizeof(sin)))
+        {
+            st_d_error("Bind DNS socket error!");
+            exit(EXIT_FAILURE);
+        }
+
+        cltopt.dns_transid_port_map = (unsigned short*)malloc(sizeof(unsigned short) * 0xFFFF);
+        if (!cltopt.dns_transid_port_map) 
+        {
+            st_d_error("Malloc for requestid-port failed!");
+            exit(EXIT_FAILURE);
+        }
+
+        P_PORTTRANS p_trans = sc_create_trans(cltopt.dns_port); 
+        if (!p_trans)
+        {
+            st_d_error("本地无空闲TRANS!");
+            exit(EXIT_FAILURE);
+        }
+        p_trans->is_enc = 1;
+        p_trans->l_port = cltopt.dns_port;
+        encrypt_ctx_init(&p_trans->ctx_enc, p_trans->l_port, cltopt.enc_key, 1); 
+        encrypt_ctx_init(&p_trans->ctx_dec, p_trans->l_port, cltopt.enc_key, 0);
+        // 建立DNS UDP事件侦听
+        p_trans->extra_ev = event_new(base, dns_socket, EV_READ | EV_PERSIST, 
+                                      dns_client_to_proxy_cb, p_trans);
+
+
+        int dns_srv_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if(sc_connect_srv(dns_srv_fd) != RET_YES) 
+        {
+            SYS_ABORT("连接服务器失败！");
+        }
+
+        sc_daemon_dns_init_srv(dns_srv_fd, p_trans->l_port, 12333);
+        evutil_make_socket_nonblocking(dns_srv_fd);
+
+        // later enabled
+        //event_add(p_trans->extra_ev, NULL) != 0);
+
+        p_trans->srv_bev = bufferevent_socket_new(base, dns_srv_fd, BEV_OPT_CLOSE_ON_FREE);
+        bufferevent_setcb(p_trans->srv_bev, dns_bufferread_cb_enc, NULL, dns_bufferevent_cb, p_trans);
+
+        st_d_print("[DAEMON]DNS代理创建侦听套接字OK %d", cltopt.dns_port); 
+    }
 
     sc_set_eventcb_srv(srv_fd, base); 
 

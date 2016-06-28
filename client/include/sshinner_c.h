@@ -67,9 +67,10 @@ typedef struct _portmap {
 // 实际传输时候的端口和bufferevent，为动态创建，动态关闭的
 typedef struct _porttrans {
     SLIST_HEAD          list;
-    unsigned short      l_port;      //本地实际传输的端口
+    unsigned short     l_port;        //本地实际传输的端口
     struct bufferevent *local_bev;
     struct bufferevent *srv_bev;
+    struct event*      extra_ev;   //对于DNS这种UDP的类型，不支持bufferevent模式
 
     int                 is_enc;
     ENCRYPT_CTX         ctx_enc;
@@ -91,8 +92,10 @@ typedef struct _clt_opt
     char username[128];  
     unsigned long       userid;
     struct sockaddr_in  srv;
-    struct bufferevent* srv_bev;    //主要是控制信息通信
-    unsigned short      ss5_port;    // SS5代理只支持用DAEMON端启动，因为USR端没法单独启动
+    struct bufferevent* srv_bev;   //主要是控制信息通信
+    unsigned short      ss5_port;  // SS5代理只支持用DAEMON端启动，因为USR端没法单独启动
+    unsigned short      dns_port;  // DNS代理是否启用，#53端口
+    unsigned short      *dns_transid_port_map;  // 搜索得知结果发送到那个端口
     sd_id128_t          session_uuid;
 
     unsigned char       enc_key[RC4_MD5_IV_LEN];
@@ -161,6 +164,16 @@ extern P_PORTTRANS sc_create_trans(unsigned short l_sock);
 extern RET_T sc_free_trans(P_PORTTRANS p_trans);
 extern RET_T sc_free_all_trans(void);
 
+
+/**
+ * DNS part
+ */
+
+RET_T sc_daemon_dns_init_srv(int srv_fd, unsigned short l_port,
+                             unsigned long salt);
+void dns_client_to_proxy_cb(evutil_socket_t socket_fd, short ev_flags, void * ptr);
+void dns_bufferread_cb_enc(struct bufferevent *bev, void *ptr);
+void dns_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 
 /**
  * 线程池索引的映射

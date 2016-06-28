@@ -33,7 +33,7 @@
 struct _activ_item;
 typedef struct _trans_item {
     SLIST_HEAD      list;
-    struct _activ_item*   p_activ_item;
+    struct _activ_item* p_activ_item;
     unsigned short      usr_lport;       //USR本地连接的端口，作为标示
     // RC4_MD5　加密模块
     int                 is_enc;
@@ -41,6 +41,7 @@ typedef struct _trans_item {
     ENCRYPT_CTX         ctx_dec;
     struct bufferevent *bev_u;
     struct bufferevent *bev_d;
+    struct event*       extra_ev;
     void*  dat;
 } TRANS_ITEM, *P_TRANS_ITEM;
 
@@ -129,6 +130,8 @@ void main_bufferevent_cb(struct bufferevent *bev, short events, void *ptr);
 static RET_T ss_main_handle_init(struct bufferevent *bev, 
                            P_CTL_HEAD p_head, char* dat);
 static RET_T ss_main_handle_ss5(struct bufferevent *bev, 
+                           P_CTL_HEAD p_head, void* dat);
+static RET_T ss_main_handle_dns(struct bufferevent *bev, 
                            P_CTL_HEAD p_head, void* dat);
 static RET_T ss_main_handle_ctl(struct bufferevent *bev, P_CTL_HEAD p_head);
 RET_T ss_send_head_cmd(struct bufferevent *bev, P_CTL_HEAD p_head,

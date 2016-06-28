@@ -18,6 +18,24 @@ static pthread_mutex_t init_lock;
 static pthread_cond_t init_cond;
 
 
+
+void dns_remote_cb(evutil_socket_t socket_fd, short ev_flags, void * ptr)
+{
+    P_TRANS_ITEM p_trans = (P_TRANS_ITEM)ptr; 
+    ENC_FRAME from_f;
+    ENC_FRAME to_f;
+
+    int nread = recvfrom(socket_fd,
+                         (void *)from_f.dat, sizeof(from_f.dat), 0, NULL, NULL);
+
+    if (nread > 0)
+    {
+        from_f.len = nread;
+        encrypt(&p_trans->ctx_enc, &from_f, &to_f);
+        bufferevent_write(p_trans->bev_d, to_f.dat, to_f.len); 
+    }
+}
+
 void thread_bufferevent_cb(struct bufferevent *bev, short events, void *ptr)
 {
     P_TRANS_ITEM p_trans = (P_TRANS_ITEM)ptr; 
@@ -143,6 +161,64 @@ void thread_bufferread_cb_enc(struct bufferevent *bev, void *ptr)
 }
 
 
+void thread_bufferread_cb_dns_enc(struct bufferevent *bev, void *ptr)
+{
+    P_TRANS_ITEM p_trans = (P_TRANS_ITEM)ptr; 
+
+    ENC_FRAME from_f;
+    ENC_FRAME to_f;
+
+    struct evbuffer *input = bufferevent_get_input(bev);
+    struct evbuffer *output = bufferevent_get_output(bev);
+
+    if (bev == p_trans->bev_d && ! p_trans->bev_u) 
+    {
+        //st_d_print("加密转发数据包USR->REMOTE");    // 解密
+
+        from_f.len = bufferevent_read(p_trans->bev_d, from_f.dat, FRAME_SIZE); 
+        if (from_f.len > 0)
+        {
+            decrypt(&p_trans->ctx_dec, &from_f, &to_f);
+
+            // 把请求转发给远程的nameserver 
+            if (!p_trans->extra_ev)
+            {
+                int dns_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                if (dns_socket < 0 )
+                {
+                    st_d_error("Create DNS socket error!");
+                    return;
+                }
+
+                evutil_make_socket_closeonexec(dns_socket);
+                evutil_make_socket_nonblocking(dns_socket);
+                unsigned int optval = 1;
+                setsockopt(dns_socket, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));//禁用NAGLE算法
+
+                p_trans->extra_ev = event_new(bufferevent_get_base(bev), 
+                                              dns_socket, EV_READ | EV_PERSIST, dns_remote_cb, p_trans);
+                event_add(p_trans->extra_ev, NULL);
+            }
+
+            struct sockaddr_in sin;
+            memset(&sin, 0, sizeof(sin));
+            sin.sin_family = AF_INET;
+            sin.sin_addr.s_addr = inet_addr("8.8.8.8");
+            sin.sin_port = htons(53); /* Port Num */
+
+            sendto(event_get_fd(p_trans->extra_ev),
+                   to_f.dat, to_f.len, 0, (struct sockaddr *)&sin, sizeof(sin)); 
+        }        
+        else
+        {
+            st_d_error("读取数据出错！");
+        }
+
+    }
+
+    return;
+}
+
 static void *thread_run(void *arg);
 static void thread_process(int fd, short which, void *arg);
 
@@ -245,6 +321,7 @@ static void thread_process(int fd, short which, void *arg)
     P_SLIST_HEAD p_list = NULL;
     P_C_ITEM p_c_item = NULL;
     struct bufferevent *new_bev = NULL;
+    struct bufferevent *new_ext_bev = NULL;
     char buf[1];
     CTL_HEAD head;
 
@@ -413,13 +490,13 @@ static void thread_process(int fd, short which, void *arg)
             free(p_c_item);
 
             evutil_make_socket_nonblocking(p_c_item->socket);
-            struct bufferevent *new_bev = 
+            new_bev = 
                 bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
             assert(new_bev);
             bufferevent_setcb(new_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
 
             evutil_make_socket_nonblocking(remote_socket);
-            struct bufferevent *new_ext_bev = 
+            new_ext_bev = 
                 bufferevent_socket_new(p_threadobj->base, remote_socket , BEV_OPT_CLOSE_ON_FREE); 
             assert(new_ext_bev);
             bufferevent_setcb(new_ext_bev, thread_bufferread_cb_enc, NULL, thread_bufferevent_cb, p_trans);
@@ -443,6 +520,54 @@ static void thread_process(int fd, short which, void *arg)
             // never too late to enable it!
             bufferevent_enable(new_bev, EV_READ|EV_WRITE);
             bufferevent_enable(new_ext_bev, EV_READ|EV_WRITE);
+            break;
+
+    case 'N':   // DAEMON->USR
+            p_list = slist_fetch(&p_threadobj->conn_queue);
+            if (!p_list)
+            {
+                st_d_error("无法从任务队列中获取任务！");
+                return;
+            }
+            p_c_item = list_entry(p_list, C_ITEM, list);
+            p_trans = (P_TRANS_ITEM)p_c_item->arg.ptr; 
+
+            assert(p_trans->is_enc);
+            assert(p_trans->dat); 
+
+            encrypt_ctx_init(&p_trans->ctx_enc, p_trans->usr_lport, p_trans->p_activ_item->enc_key, 1); 
+            encrypt_ctx_init(&p_trans->ctx_dec, p_trans->usr_lport, p_trans->p_activ_item->enc_key, 0);
+
+            
+            free(p_c_item);
+
+            evutil_make_socket_nonblocking(p_c_item->socket);
+            new_bev = 
+                bufferevent_socket_new(p_threadobj->base, p_c_item->socket, BEV_OPT_CLOSE_ON_FREE); 
+            assert(new_bev);
+            bufferevent_setcb(new_bev, thread_bufferread_cb_dns_enc, NULL, thread_bufferevent_cb, p_trans);
+
+            
+            p_trans->bev_d = new_bev;
+            p_trans->bev_u = NULL;
+
+            st_d_print("DDDDD: 当前活动连接数：[[[ %d ]]], 任务队列：[[ %d ]]", 
+                       slist_count(&p_trans->p_activ_item->trans), slist_count(&p_threadobj->conn_queue)); 
+
+
+            // never too late to enable it!
+            bufferevent_enable(new_bev, EV_READ|EV_WRITE);
+
+            st_d_print("DNS激活客户端Bufferevent使能！");
+            memset(&head, 0, CTL_HEAD_LEN);
+            head.direct = USR_DAEMON; 
+            head.cmd = HD_CMD_DNS_ACT; 
+            head.extra_param = p_trans->usr_lport; 
+            head.mach_uuid = p_trans->p_activ_item->mach_uuid; 
+
+            assert(p_trans->p_activ_item->bev_daemon);
+            bufferevent_write(p_trans->p_activ_item->bev_daemon, &head, CTL_HEAD_LEN); 
+
             break;
 
     default:

@@ -100,6 +100,20 @@ void srv_bufferread_cb(struct bufferevent *bev, void *ptr)
 
         return;
     }
+    if (head.cmd == HD_CMD_DNS_ACT) 
+    {    
+        // OK，返回给本地程序告知可以开始传输了
+        P_PORTTRANS p_trans = sc_find_trans(head.extra_param); 
+
+        assert(p_trans->local_bev == NULL);
+
+        event_add(p_trans->extra_ev, NULL);
+        bufferevent_enable(p_trans->srv_bev, EV_READ|EV_WRITE);
+
+        st_d_print("DNS准备传输数据：%d", head.extra_param); 
+
+        return;
+    }
     if (head.cmd == HD_CMD_CONN) 
     {
         assert(cltopt.C_TYPE == C_DAEMON);

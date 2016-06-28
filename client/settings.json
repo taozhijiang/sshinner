@@ -1,6 +1,7 @@
 {
     "server":
     {
+        //"ipaddr": "159.203.200.39",
         "ipaddr": "127.0.0.1",
         "port": 8900,
     },
@@ -8,9 +9,11 @@
     {
         "username": "taozj",
         "ss5_port": 1083,
+        "dns_port": 8853,   //实际使用需要53
         "userid": 1222,
         //"r_mach_uuid": "1777ea03b44048099aa93e7702662952", //fedora
         "r_mach_uuid": "f8421165626e3f61d630656c5647286a",  //gentoo
+        //"r_mach_uuid": "5230acdc7206812a85b2c741573f3d72", //remote
         "portmaps": [
         {"usrport":8801, "daemonport":21 }, 
         {"usrport":8802, "daemonport":22 }, 

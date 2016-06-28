@@ -23,6 +23,9 @@ enum DIREC { USR_DAEMON=1, DAEMON_USR=2,
 #define HD_CMD_SS5       'S'   // ss5代理
 #define HD_CMD_SS5_ACT   'T'
 
+#define HD_CMD_DNS       'D'   // DNS代理
+#define HD_CMD_DNS_ACT   'J'   // DNS代理激活
+
 #define HD_CMD_END_TRANS 'X'    //用以拆除TRANS连接
 
 #define HD_CMD_OK        'O'
