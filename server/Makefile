@@ -1,9 +1,9 @@
 DEBUG ?= 1
 CC = gcc
-CFLAGS = -g -O2
+CCFLAGS = -g -O2
 CPPFLAGS = 
 CXX = g++
-CXXFLAGS = $(CFLAGS)
+CXXFLAGS = $(CCFLAGS)
 PACKAGE = sshinner_server
 PACKAGE_NAME = $(PACKAGE)
 PACKAGE_STRING = $(PACKAGE_NAME)1.0
@@ -13,7 +13,7 @@ VERSION = 1.0
 SUBDIRS = source
 COMMDIRS = ../common
 TESTDIR = test
-EXTRAFLAGS = -g -I./include -I../include -lpthread -lrt -lssl -lcrypto -levent -lsystemd -ljson-c -lz
+EXTRAFLAGS = -I./include -I../include -lpthread -lrt -lssl -lcrypto -levent -lsystemd -ljson-c -lz
 OBJDIR = obj
 
 vpath %.c $(SUBDIRS)
