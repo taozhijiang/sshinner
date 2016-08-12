@@ -1,3 +1,8 @@
+[![Language](https://img.shields.io/badge/Language-GCC-green.svg)](https://gcc.gnu.org/) 
+[![Author](https://img.shields.io/badge/author-Nicol%20TAO-blue.svg)](https://taozj.org/) 
+[![License](https://img.shields.io/badge/license-BSD-red.svg)](http://yanyiwu.mit-license.org)
+
+
 基于外网服务器中继的内网传透的代理　 
 
 使用教程：  
